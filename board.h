@@ -8,68 +8,64 @@
 
 using namespace std;
 
-enum Player
-{
-    WHITE,
-    BLACK
-};
-enum class File : char
-{
-    A = 'A',
-    B = 'B',
-    C = 'C',
-    D = 'D',
-    E = 'E'
-};
-enum class Rank : char
-{
-    ONE = '1',
-    TWO = '2',
-    THREE = '3',
-    FOUR = '4',
-    FIVE = '5'
-};
-enum class StoneType : char
-{
-    FLAT = 'F',
-    STANDING = 'S',
-    CAPSTONE = 'C'
-};
+/***********************************
+DEFINITIONS OF CHARACTER IDENTIFIERS
+
+PLAYER
+    W = white player
+    B = black player
+FILE
+    left-to-right columns of the board,
+    indicated by A, B, C, D and E
+RANK
+    bottom-to-top rows of the board,
+    indicated by 1, 2, 3, 4 and 5
+STONE TYPE
+    F = flat stone
+    S = standing stone
+    C = capstone
+STONE COLOR
+    Same as the player definition
+***********************************/
 
 class Stone
 {
 private:
-    StoneType type;
-    Player color;
+    char type;
+    char color;
 
 public:
-    Stone(Player color, StoneType type)
+    Stone(char c, char t) : type{t}, color{c} {}
+    char get_type() { return type; };
+    void flatten()
+    // Flatten a standing stone into a flat stone.
     {
-        color = color;
-        type = type;
-    }
-    StoneType get_type();
-    void flatten(); // When standing stones are flattened into flat stones.
+        if (type == 'S')
+        {
+            type = 'F';
+        }
+        else
+        {
+            throw runtime_error("Cannot flatten anything other than a standing stone.");
+        }
+    };
 };
 
 class Square
 {
 private:
-    // Stones contained on this square
-    stack<Stone> stones;
+    stack<Stone> stones; // Stones contained on this square
 
 public:
-    // Square(Rank, File);
-    bool is_empty();
-    std::vector<Stone> remove_stones(int amount);
-    void add_stones(std::vector<Stone> stones);
+    bool is_empty() { return stones.empty(); };
+    void add_stone(Stone stone) { stones.push(stone); };
 };
 
 class Board
 {
 private:
     bool game_has_ended = false;
-    Player active_player = Player::WHITE;
+    char active_player = 'W';
     // Stone counts for players
     int white_stone_reserve = 21;
     int black_stone_reserve = 21;
@@ -99,15 +95,16 @@ private:
         {Square(), Square(), Square(), Square(), Square()},
         {Square(), Square(), Square(), Square(), Square()},
     };
-    const Player &get_active_player() { return active_player; };
+    const char &get_active_player() { return active_player; };
+    bool player_has_capstone(const char &);
+    bool player_has_stones(const char &);
     Stone take_stone_from_reserve(const char &);
-    Stone take_capstone(const Player &);
-    Stone take_stone(const Player &, const char &);
-    bool player_has_capstone(const Player &);
-    bool player_has_stones(const Player &);
+    Stone take_capstone(const char &);
+    Stone take_stone(const char &, const char &);
+    void place_stone(const int &, const int &, const Stone);
 
 public:
-    vector<int> get_legal_moves_for_player(Player player);
+    vector<int> get_legal_moves_for_player(char);
     int do_move(const string &);
 };
 
