@@ -59,17 +59,12 @@ public:
 class Square
 {
 private:
-    stack<Stone> stones; // Stones contained on this square
+    stack<Stone> stones;
 
 public:
     bool is_empty() { return stones.empty(); };
-    void add_stone(Stone stone) { stones.push(stone); };
-    Stone get_stone()
-    {
-        Stone stone = stones.top();
-        stones.pop();
-        return stone;
-    };
+    void add_stone(Stone);
+    Stone get_stone();
 };
 
 class Board
@@ -114,6 +109,7 @@ private:
     Stone take_stone(const char &, const char &);
 
 public:
+    Board();
     void place_stone(const int &, const int &, const Stone); // move to private eventually.
     void execute_ptn_move(const string &);                   // move to private eventually.
     vector<int> get_legal_moves_for_player(char);
