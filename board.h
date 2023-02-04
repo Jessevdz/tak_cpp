@@ -26,6 +26,11 @@ STONE TYPE
     C = capstone
 STONE COLOR
     Same as the player definition
+STACK MOVEMENT
+    + = move to higher rows (up the board)
+    - = move to lower rows (down the board)
+    > = move to higher files (to the right)
+    < = move to lower files (to the left)
 ***********************************/
 
 class Stone
@@ -36,7 +41,7 @@ private:
 
 public:
     Stone(char c, char t) : type{t}, color{c} {}
-    char get_type() { return type; };
+    char &get_type() { return type; };
     void flatten()
     // Flatten a standing stone into a flat stone.
     {
@@ -59,6 +64,12 @@ private:
 public:
     bool is_empty() { return stones.empty(); };
     void add_stone(Stone stone) { stones.push(stone); };
+    Stone get_stone()
+    {
+        Stone stone = stones.top();
+        stones.pop();
+        return stone;
+    };
 };
 
 class Board
@@ -101,9 +112,10 @@ private:
     Stone take_stone_from_reserve(const char &);
     Stone take_capstone(const char &);
     Stone take_stone(const char &, const char &);
-    void place_stone(const int &, const int &, const Stone);
 
 public:
+    void place_stone(const int &, const int &, const Stone); // move to private eventually.
+    void execute_ptn_move(const string &);                   // move to private eventually.
     vector<int> get_legal_moves_for_player(char);
     int do_move(const string &);
 };

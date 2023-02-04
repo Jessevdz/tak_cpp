@@ -1,4 +1,5 @@
 #include <stdexcept>
+#include <iostream>
 #include <string>
 #include "board.h"
 
@@ -140,23 +141,21 @@ Take a stone from a player's reserve
 
 void Board::place_stone(const int &file_index, const int &rank_index, const Stone stone)
 /*
+TODO Remove eventually.
 Place a stone on top of the stack of stones at the square located at [file, rank]
 */
 {
     squares[file_index][rank_index].add_stone(stone);
 };
 
-int Board::do_move(const string &ptn_move)
+void Board::execute_ptn_move(const string &ptn_move)
 /*
-Parse a PTN string and execute the move on the board.
-Switch active player when move is done.
-Return 1 if the game ends and the active player has won.
-Return 0 in all other cases.
+Parse a PTN string and change the board state accordingly.
 */
 {
     if (ptn_move.size() == 3)
+    // Place stone in an empty square
     {
-        // Place stone in an empty square
         char stone_type = ptn_move.at(0);
         char file = ptn_move.at(1);
         char rank = ptn_move.at(2);
@@ -167,16 +166,76 @@ Return 0 in all other cases.
             throw runtime_error("Cannot place a new stone on a square that is not empty.");
         }
         Stone stone = take_stone_from_reserve(stone_type);
-        place_stone(file_index, rank_index, stone);
+        squares[file_index][rank_index].add_stone(stone);
     }
-    else if (ptn_move.size() == 9)
+    else if (ptn_move.size() == 8)
+    // Move a stack of stones
     {
-        // Move a stack of stones
+        int stones_to_take = ptn_move.at(0) - '0'; // Converts char representation to int
+        if (stones_to_take > 5 | stones_to_take < 1)
+        {
+            throw runtime_error("Players can only move stacks of at least 1 and at most 5 stones on a 5x5 board.");
+        }
+        char file = ptn_move.at(1);
+        char rank = ptn_move.at(2);
+        int start_file_index = file_to_index[file];
+        int start_rank_index = rank_to_index[rank];
+        int cur_file_index = start_file_index;
+        int cur_rank_index = start_rank_index;
+        char direction = ptn_move.at(3);
+        string drop_counts = ptn_move.substr(4, 8);
+
+        stack<Stone> moving_stones;
+        while (stones_to_take > 0)
+        {
+            moving_stones.push(squares[start_file_index][start_rank_index].get_stone());
+            stones_to_take--;
+        }
+        for (auto it = drop_counts.cbegin(); *it != '0'; ++it)
+        {
+            int stones_to_drop = *it - '0'; // Converts char representation to int
+            switch (direction)
+            {
+            case '+':
+                // Rank increases
+                cur_rank_index++;
+                break;
+            case '-':
+                // Rank decreases
+                cur_rank_index--;
+                break;
+            case '<':
+                // File decreases
+                cur_file_index--;
+                break;
+            case '>':
+                // File increases
+                cur_file_index++;
+                break;
+            }
+            while (stones_to_drop > 0)
+            {
+                squares[cur_file_index][cur_rank_index].add_stone(moving_stones.top());
+                moving_stones.pop();
+                stones_to_drop--;
+            }
+        }
     }
     else
     {
         throw invalid_argument("Board received an invalid PTN move string.");
     }
+};
+
+int Board::do_move(const string &ptn_move)
+/*
+Execute the PTN move
+Check end-of-game criteria
+Switch the active player
+Return 1 if the game ends, 0 if it does not.
+*/
+{
+    return 1;
 };
 
 void test_placing_stones()
@@ -186,18 +245,27 @@ void test_placing_stones()
     string place_stone_2 = "FA2";
     string place_stone_3 = "SA3";
     string place_stone_4 = "CA4";
-    board.do_move(place_stone_1);
-    board.do_move(place_stone_2);
-    board.do_move(place_stone_3);
-    board.do_move(place_stone_4);
+    board.execute_ptn_move(place_stone_1);
+    board.execute_ptn_move(place_stone_2);
+    board.execute_ptn_move(place_stone_3);
+    board.execute_ptn_move(place_stone_4);
 }
 
 void test_moving_stones()
 {
-    string move_stack = "1A1+1000F";
+    Board board = Board();
+    // Set up stack
+    board.place_stone(2, 1, Stone('W', 'F'));
+    board.place_stone(2, 1, Stone('B', 'F'));
+    board.place_stone(2, 1, Stone('W', 'F'));
+    board.place_stone(2, 1, Stone('B', 'F'));
+    board.place_stone(2, 1, Stone('W', 'C'));
+    string move_stack = "4C2+2110";
+    board.execute_ptn_move(move_stack);
 }
 
 int main()
 {
-    test_placing_stones();
+    // test_placing_stones();
+    test_moving_stones();
 }
