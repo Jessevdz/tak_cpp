@@ -110,7 +110,7 @@ private:
 
 public:
     Board();
-    void place_stone(const int &, const int &, const Stone); // move to private eventually.
+    void place_stone(const int &, const int &, const Stone); // Remove eventually.
     void execute_ptn_move(const string &);                   // move to private eventually.
     vector<int> get_legal_moves_for_player(char);
     int do_move(const string &);
