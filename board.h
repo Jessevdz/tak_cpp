@@ -37,6 +37,7 @@ public:
     bool is_empty() { return stones.empty(); };
     bool is_road_square(const char &);
     bool is_controlled_by(const char &);
+    bool is_blocking();
     void add_stone(Stone);
     Stone get_stone();
     char get_top_stone_type();

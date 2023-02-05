@@ -51,6 +51,13 @@ map<string, int> _file_to_index = {
     {"D", 4},
     {"E", 5},
 };
+map<int, string> _index_to_file = {
+    {0, "A"},
+    {1, "B"},
+    {2, "C"},
+    {3, "D"},
+    {4, "E"},
+};
 // Mapping between amount of stones moved and valid drop counts.
 vector<string> _drop_counts_one{"1000"};
 vector<string> _drop_counts_two{"2000", "1100"};
@@ -89,6 +96,34 @@ map<string, vector<string>>
         {"3", _drop_counts_three},
         {"4", _drop_counts_four},
         {"5", _drop_counts_five},
+    };
+// Mapping between how many stones we can move, AND how many squares we can move in a direction
+map<int, vector<string>> _move_one{{1, {"1000"}}};
+map<int, vector<string>> _move_two{{1, {"2000"}}, {2, {"1100"}}};
+map<int, vector<string>> _move_three{
+    {1, {"3000"}},
+    {2, {"2100", "1200"}},
+    {3, {"1110"}},
+};
+map<int, vector<string>> _move_four{
+    {1, {"4000"}},
+    {2, {"3100", "2200", "1300"}},
+    {3, {"2110", "1210", "1120"}},
+    {4, {"1111"}},
+};
+map<int, vector<string>> _move_five{
+    {1, {"5000"}},
+    {2, {"4100", "3200", "2300", "1400"}},
+    {3, {"3110", "2210", "2120", "1310", "1220", "1130"}},
+    {4, {"2111", "1211", "1121", "1112"}},
+};
+map<int, map<int, vector<string>>>
+    _valid_drop_counts_move_squares{
+        {1, _move_one},
+        {2, _move_two},
+        {3, _move_three},
+        {4, _move_four},
+        {5, _move_five},
     };
 vector<string> _file{"A", "B", "C", "D", "E"};
 vector<string> _rank{"1", "2", "3", "4", "5"};

@@ -69,6 +69,20 @@ bool Square::is_controlled_by(const char &active_player)
 }
 
 /********************************************************
+Return true if the top piece is blocking wrt. moving a stack
+********************************************************/
+bool Square::is_blocking()
+{
+    if (is_empty())
+        return false;
+    if ((stones.top().type == 'S') | (stones.top().type == 'C'))
+    {
+        return true;
+    }
+    return false;
+}
+
+/********************************************************
 Return the type char of the top stone in this square.
 ********************************************************/
 char Square::get_top_stone_type()
@@ -283,6 +297,8 @@ Return a mask indicating valid PTN moves for the active player.
 *************************************************************/
 vector<int> Board::valid_moves()
 {
+    // Gather necessary state from the board
+
     // Array indicating which squares the active player controls
     // It contains 1 if the active player controls the square
     // It contains 0 if the active player does not control the square
@@ -304,6 +320,10 @@ vector<int> Board::valid_moves()
         {'E', 'E', 'E', 'E', 'E'},
     };
 
+    // File-to-rank map of squares that contain blocking pieces.
+    map<int, int> blocking_files;
+    map<int, int> blocking_ranks; // Rank-to-file
+
     // Populate the arrays
     for (int file = 0; file < 5; file++)
     {
@@ -314,6 +334,11 @@ vector<int> Board::valid_moves()
                 control_array[file][rank] = 1;
             }
             stone_type_array[file][rank] = squares[file][rank].get_top_stone_type();
+            if (squares[file][rank].is_blocking())
+            {
+                blocking_files[file] = rank;
+                blocking_ranks[rank] = file;
+            }
         }
     }
 
@@ -353,32 +378,125 @@ vector<int> Board::valid_moves()
     }
 
     // Enumerate all valid PTN moves for active player
+    /*
+    TODO: Edge case with capstones flattening standing stones.
+    */
     vector<string> valid_ptn_moves;
+    bool check_blocking_file = false;
+    bool check_blocking_rank = false;
     for (int file = 0; file < 5; file++)
     {
         for (int rank = 0; rank < 5; rank++)
         {
+            /*
+            If the square is empty, we can place stones there.
+            */
             if (stone_type_array[file][rank] == 'E')
             {
-                // If the square is empty, we can place stones there.
-                for (const string r : _rank)
+                for (const string t : valid_stone_types)
                 {
-                    for (const string f : _file)
+                    string m = t + to_string(file) + to_string(rank);
+                    valid_ptn_moves.push_back(m);
+                }
+            }
+            /*
+            If we control the square, we can move the stack it contains.
+            */
+            if (control_array[file][rank] == 1)
+            {
+                // Amount of stones we can move
+                int stack_size = squares[file][rank].get_size();
+                if (stack_size > 5)
+                    stack_size = 5;
+                // Are there any blocking stones in this file and rank?
+                if (blocking_files.find(file) != blocking_files.end())
+                {
+                    check_blocking_file = true;
+                }
+                if (blocking_ranks.find(rank) != blocking_ranks.end())
+                {
+                    check_blocking_rank = true;
+                }
+                int movement_squares;
+                for (string dr : _directions)
+                {
+                    // Figure out how far we can move in each direction
+                    movement_squares = 0;
+                    if (dr == "+")
                     {
-                        for (const string t : valid_stone_types)
+                        if (check_blocking_file)
                         {
-                            string m = t + f + r;
-                            valid_ptn_moves.push_back(m);
+                            int blocking_rank = blocking_files[file];
+                            movement_squares = 4 - blocking_rank - 1;
+                        }
+                        else
+                        {
+                            movement_squares = 4 - rank;
+                        }
+                    }
+                    if (dr == "-")
+                    {
+                        if (check_blocking_file)
+                        {
+                            int blocking_rank = blocking_files[file];
+                            movement_squares = rank - blocking_rank - 1;
+                        }
+                        else
+                        {
+                            movement_squares = rank;
+                        }
+                    }
+                    if (dr == ">")
+                    {
+                        if (check_blocking_rank)
+                        {
+                            int blocking_file = blocking_ranks[rank];
+                            movement_squares = blocking_file - 1;
+                        }
+                        else
+                        {
+                            movement_squares = 4 - file;
+                        }
+                    }
+                    if (dr == "<")
+                    {
+                        if (check_blocking_rank)
+                        {
+                            int blocking_file = blocking_ranks[rank];
+                            movement_squares = file - blocking_file - 1;
+                        }
+                        else
+                        {
+                            movement_squares = file;
+                        }
+                    }
+
+                    if (movement_squares <= 0)
+                    {
+                        continue;
+                    }
+                    else
+                    {
+                        // Enumerate the movement strings
+                        // stack_size == how many stones we can move from this position
+                        // movement_squares == how many squares we can move them in
+                        for (int nr_stones = 0; nr_stones <= stack_size; nr_stones++)
+                        {
+                            for (int nr_sq = 0; nr_sq <= movement_squares; nr_sq++)
+                            {
+                                vector<string> drop_counts = _valid_drop_counts_move_squares[nr_stones][nr_sq];
+                                for (string dc : drop_counts)
+                                {
+                                    string m = to_string(nr_stones) + _index_to_file[file] + to_string(rank + 1) + dr + dc;
+                                    valid_ptn_moves.push_back(m);
+                                }
+                            }
                         }
                     }
                 }
-            }
-            if (control_array[file][rank] == 1)
-            {
-                // If we control the square, we can move the stack it contains.
-                int stack_size = squares[file][rank].get_size(); // Amount of stones we can move
-                if (stack_size > 5)
-                    stack_size = 5;
+                // safety
+                check_blocking_file = false;
+                check_blocking_rank = false;
             }
         }
     }
