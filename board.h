@@ -8,31 +8,6 @@
 
 using namespace std;
 
-/***********************************
-DEFINITIONS OF CHARACTER IDENTIFIERS
-
-PLAYER
-    W = white player
-    B = black player
-FILE
-    left-to-right columns of the board,
-    indicated by A, B, C, D and E
-RANK
-    bottom-to-top rows of the board,
-    indicated by 1, 2, 3, 4 and 5
-STONE TYPE
-    F = flat stone
-    S = standing stone
-    C = capstone
-STONE COLOR
-    Same as the player definition
-STACK MOVEMENT
-    + = move to higher rows (up the board)
-    - = move to lower rows (down the board)
-    > = move to higher files (to the right)
-    < = move to lower files (to the left)
-***********************************/
-
 class Stone
 {
 public:
@@ -60,9 +35,12 @@ private:
 
 public:
     bool is_empty() { return stones.empty(); };
+    bool is_road_square(const char &);
+    bool is_controlled_by(const char &);
     void add_stone(Stone);
     Stone get_stone();
-    bool is_road_square(const char &);
+    char get_top_stone_type();
+    int get_size() { return stones.size(); };
 };
 
 class Board
@@ -75,7 +53,8 @@ private:
     int black_stone_reserve = 21;
     int black_capstone = 1;
     int white_capstone = 1;
-    map<int, string> all_ptn_moves; // Mapping from int values to all possible PTN strings.
+    map<int, string> int_to_ptn_move;
+    map<string, int> ptn_move_to_int;
     map<char, int> rank_to_index = {
         {'1', 0},
         {'2', 1},
@@ -111,6 +90,7 @@ public:
     void place_stone(const int &, const int &, const Stone); // Remove eventually.
     void execute_ptn_move(const string &);                   // move to private eventually.
     bool player_has_road();                                  // move to private eventually.
+    vector<int> valid_moves();                               // move to private eventually.
     vector<int> get_legal_moves_for_player(char);
     int do_move(const string &);
 };

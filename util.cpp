@@ -9,6 +9,94 @@
 using namespace std;
 
 /*************************************
+Define PTN variables
+*************************************/
+/***********************************
+DEFINITIONS OF CHARACTER IDENTIFIERS
+
+PLAYER
+    W = white player
+    B = black player
+FILE
+    left-to-right columns of the board,
+    indicated by A, B, C, D and E
+RANK
+    bottom-to-top rows of the board,
+    indicated by 1, 2, 3, 4 and 5
+STONE TYPE
+    F = flat stone
+    S = standing stone
+    C = capstone
+    E = empty square, no stone
+STONE COLOR
+    Same as the player definition
+STACK MOVEMENT
+    + = move to higher rows (up the board)
+    - = move to lower rows (down the board)
+    > = move to higher files (to the right)
+    < = move to lower files (to the left)
+***********************************/
+// Mapping between ranks and files, and their integer positions
+map<string, int> _rank_to_index = {
+    {"1", 1},
+    {"2", 2},
+    {"3", 3},
+    {"4", 4},
+    {"5", 5},
+};
+map<string, int> _file_to_index = {
+    {"A", 1},
+    {"B", 2},
+    {"C", 3},
+    {"D", 4},
+    {"E", 5},
+};
+// Mapping between amount of stones moved and valid drop counts.
+vector<string> _drop_counts_one{"1000"};
+vector<string> _drop_counts_two{"2000", "1100"};
+vector<string> _drop_counts_three{"3000", "2100", "1200", "1110"};
+vector<string> _drop_counts_four{
+    "4000",
+    "3100",
+    "2200",
+    "2110",
+    "1300",
+    "1210",
+    "1120",
+    "1111",
+};
+vector<string> _drop_counts_five{
+    "5000",
+    "4100",
+    "3200",
+    "3110",
+    "2300",
+    "2210",
+    "2120",
+    "2111",
+    "1400",
+    "1310",
+    "1220",
+    "1211",
+    "1130",
+    "1121",
+    "1112",
+};
+map<string, vector<string>>
+    _valid_drop_counts{
+        {"1", _drop_counts_one},
+        {"2", _drop_counts_two},
+        {"3", _drop_counts_three},
+        {"4", _drop_counts_four},
+        {"5", _drop_counts_five},
+    };
+vector<string> _file{"A", "B", "C", "D", "E"};
+vector<string> _rank{"1", "2", "3", "4", "5"};
+vector<string> _stone_type{"C", "F", "S"};
+vector<string> _nr_of_stones{"1", "2", "3", "4", "5"};
+vector<string> _directions{"+", "-", "<", ">"};
+
+/*************************************
 Player char identifier to full string
 *************************************/
 string player_as_string(const char &player)
@@ -29,73 +117,13 @@ Enumerate all legal PTN moves
 *************************************/
 map<int, string> enumerate_all_ptn_moves()
 {
-    // Mapping between ranks and files, and their integer positions
-    map<string, int> rank_to_index = {
-        {"1", 1},
-        {"2", 2},
-        {"3", 3},
-        {"4", 4},
-        {"5", 5},
-    };
-    map<string, int> file_to_index = {
-        {"A", 1},
-        {"B", 2},
-        {"C", 3},
-        {"D", 4},
-        {"E", 5},
-    };
-    // Mapping between amount of stones moved and valid drop counts.
-    vector<string>
-        drop_counts_one{"1000"};
-    vector<string> drop_counts_two{"2000", "1100"};
-    vector<string> drop_counts_three{"3000", "2100", "1200", "1110"};
-    vector<string> drop_counts_four{
-        "4000",
-        "3100",
-        "2200",
-        "2110",
-        "1300",
-        "1210",
-        "1120",
-        "1111",
-    };
-    vector<string> drop_counts_five{
-        "5000",
-        "4100",
-        "3200",
-        "3110",
-        "2300",
-        "2210",
-        "2120",
-        "2111",
-        "1400",
-        "1310",
-        "1220",
-        "1211",
-        "1130",
-        "1121",
-        "1112",
-    };
-    map<string, vector<string>>
-        valid_drop_counts{
-            {"1", drop_counts_one},
-            {"2", drop_counts_two},
-            {"3", drop_counts_three},
-            {"4", drop_counts_four},
-            {"5", drop_counts_five},
-        };
-    vector<string> file{"A", "B", "C", "D", "E"};
-    vector<string> rank{"1", "2", "3", "4", "5"};
-    vector<string> stone_type{"C", "F", "S"};
-    vector<string> nr_of_stones{"1", "2", "3", "4", "5"};
-    vector<string> directions{"+", "-", "<", ">"};
     vector<string> all_ptn_moves;
     // Enumerate all placement moves
-    for (const string r : rank)
+    for (const string r : _rank)
     {
-        for (const string f : file)
+        for (const string f : _file)
         {
-            for (const string s : stone_type)
+            for (const string s : _stone_type)
             {
                 string placement_move = s + f + r;
                 all_ptn_moves.push_back(placement_move);
@@ -103,14 +131,14 @@ map<int, string> enumerate_all_ptn_moves()
         }
     }
     // Enumerate all stack movements
-    for (string n : nr_of_stones)
+    for (string n : _nr_of_stones)
     {
-        vector<string> drop_counts = valid_drop_counts[n];
-        for (const string r : rank)
+        vector<string> drop_counts = _valid_drop_counts[n];
+        for (const string r : _rank)
         {
-            for (const string f : file)
+            for (const string f : _file)
             {
-                for (const string dr : directions)
+                for (const string dr : _directions)
                 {
                     for (const string dc : drop_counts)
                     {
@@ -121,25 +149,25 @@ map<int, string> enumerate_all_ptn_moves()
                         int n_squares = dc_copy.size(); // Amount of squares we want to move in a direction
                         if (dr == ">")
                         {
-                            int file_index = file_to_index[f];
+                            int file_index = _file_to_index[f];
                             if ((file_index + n_squares) >= 5)
                                 continue;
                         }
                         if (dr == "<")
                         {
-                            int file_index = file_to_index[f];
+                            int file_index = _file_to_index[f];
                             if ((file_index - n_squares) < 1)
                                 continue;
                         }
                         if (dr == "+")
                         {
-                            int rank_index = rank_to_index[r];
+                            int rank_index = _rank_to_index[r];
                             if ((rank_index + n_squares) >= 5)
                                 continue;
                         }
                         if (dr == "-")
                         {
-                            int rank_index = rank_to_index[r];
+                            int rank_index = _rank_to_index[r];
                             if ((rank_index - n_squares) < 1)
                                 continue;
                         }
@@ -237,6 +265,7 @@ bool find_road(int (&road_array)[5][5])
             int b = p.second + dir[i][1];
 
             // not blocked and road square
+            // The first conditional makes sure the piece is not blocked or already visited
             if (road_array[a][b] > 0 && a >= 0 && b >= 0 && a < row && b < col)
             {
                 vertical_q.push(make_pair(a, b));

@@ -2,8 +2,8 @@
 #include <iostream>
 #include <string>
 #include <map>
-#include "board.h"
 #include "util.h"
+#include "board.h"
 
 using namespace std;
 
@@ -42,7 +42,7 @@ Stone Square::get_stone()
 }
 
 /************************************************************************
-Check if the top piece is the stack is elligible for a road for a player.
+Check if the top piece of the stack is elligible for a road for a player.
 ************************************************************************/
 bool Square::is_road_square(const char &active_player)
 {
@@ -58,12 +58,37 @@ bool Square::is_road_square(const char &active_player)
     return false;
 }
 
+/********************************************************
+Return true if the top piece belongs to the active player
+********************************************************/
+bool Square::is_controlled_by(const char &active_player)
+{
+    if (is_empty())
+        return false;
+    return (stones.top().color == active_player);
+}
+
+/********************************************************
+Return the type char of the top stone in this square.
+********************************************************/
+char Square::get_top_stone_type()
+{
+    if (is_empty())
+        return 'E';
+    return stones.top().type;
+}
+
 /**************
 BOARD FUNCTIONS
 **************/
 Board::Board()
 {
-    all_ptn_moves = enumerate_all_ptn_moves();
+    int_to_ptn_move = enumerate_all_ptn_moves();
+
+    for (auto const &m : int_to_ptn_move)
+    {
+        ptn_move_to_int[m.second] = m.first;
+    }
 }
 
 /********************************************************
@@ -253,6 +278,113 @@ Stone Board::take_stone_from_reserve(const char &stone_type)
     }
 };
 
+/*************************************************************
+Return a mask indicating valid PTN moves for the active player.
+*************************************************************/
+vector<int> Board::valid_moves()
+{
+    // Array indicating which squares the active player controls
+    // It contains 1 if the active player controls the square
+    // It contains 0 if the active player does not control the square
+    int control_array[5][5] = {
+        {0, 0, 0, 0, 0},
+        {0, 0, 0, 0, 0},
+        {0, 0, 0, 0, 0},
+        {0, 0, 0, 0, 0},
+        {0, 0, 0, 0, 0},
+    };
+
+    // Array indicating which squares contain which types of stones on top of the stack
+    // Contains "E" if the square is empty.
+    char stone_type_array[5][5] = {
+        {'E', 'E', 'E', 'E', 'E'},
+        {'E', 'E', 'E', 'E', 'E'},
+        {'E', 'E', 'E', 'E', 'E'},
+        {'E', 'E', 'E', 'E', 'E'},
+        {'E', 'E', 'E', 'E', 'E'},
+    };
+
+    // Populate the arrays
+    for (int file = 0; file < 5; file++)
+    {
+        for (int rank = 0; rank < 5; rank++)
+        {
+            if (squares[file][rank].is_controlled_by(active_player))
+            {
+                control_array[file][rank] = 1;
+            }
+            stone_type_array[file][rank] = squares[file][rank].get_top_stone_type();
+        }
+    }
+
+    // Check which stones the player can still play
+    vector<string> valid_stone_types;
+    bool player_has_stones;
+    bool player_has_capstone;
+    if (active_player == 'W')
+    {
+        if (white_capstone > 0)
+            player_has_capstone = true;
+        if (white_stone_reserve > 0)
+            player_has_stones = true;
+    }
+    else
+    {
+        if (black_capstone > 0)
+            player_has_capstone = true;
+        if (black_stone_reserve > 0)
+            player_has_stones = true;
+    }
+    if (player_has_capstone && player_has_stones)
+    {
+        valid_stone_types = {"C", "S", "F"};
+    }
+    else if (!player_has_capstone && player_has_stones)
+    {
+        valid_stone_types = {"S", "F"};
+    }
+    else if (player_has_capstone && !player_has_stones)
+    {
+        valid_stone_types = {"C"};
+    }
+    else
+    {
+        throw runtime_error("Player has no more stones. The game should have ended.");
+    }
+
+    // Enumerate all valid PTN moves for active player
+    vector<string> valid_ptn_moves;
+    for (int file = 0; file < 5; file++)
+    {
+        for (int rank = 0; rank < 5; rank++)
+        {
+            if (stone_type_array[file][rank] == 'E')
+            {
+                // If the square is empty, we can place stones there.
+                for (const string r : _rank)
+                {
+                    for (const string f : _file)
+                    {
+                        for (const string t : valid_stone_types)
+                        {
+                            string m = t + f + r;
+                            valid_ptn_moves.push_back(m);
+                        }
+                    }
+                }
+            }
+            if (control_array[file][rank] == 1)
+            {
+                // If we control the square, we can move the stack it contains.
+                int stack_size = squares[file][rank].get_size(); // Amount of stones we can move
+                if (stack_size > 5)
+                    stack_size = 5;
+            }
+        }
+    }
+    vector<int> ret;
+    return ret;
+}
 /********************************************************
 TODO Remove eventually.
 Place a stone on top of the stack of stones
@@ -450,11 +582,26 @@ void test_find_road_blocked()
     }
 }
 
+void test_find_moves()
+{
+    // There is a road
+    Board board = Board();
+    board.place_stone(0, 4, Stone('W', 'F'));
+    board.place_stone(1, 4, Stone('W', 'S'));
+    board.place_stone(1, 3, Stone('W', 'F'));
+    board.place_stone(1, 2, Stone('W', 'C'));
+    board.place_stone(2, 2, Stone('W', 'F'));
+    board.place_stone(3, 2, Stone('W', 'S'));
+    board.place_stone(4, 2, Stone('W', 'F'));
+    board.valid_moves();
+}
+
 int main()
 {
     // test_placing_stones();
     // test_moving_stones();
-    test_find_vertical_road();
-    test_find_horizontal_road();
-    test_find_road_blocked();
+    // test_find_vertical_road();
+    // test_find_horizontal_road();
+    // test_find_road_blocked();
+    test_find_moves();
 }
