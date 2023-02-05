@@ -35,13 +35,10 @@ STACK MOVEMENT
 
 class Stone
 {
-private:
-    char type;
-    char color;
-
 public:
     Stone(char c, char t) : type{t}, color{c} {}
-    char &get_type() { return type; };
+    char type;
+    char color;
     void flatten()
     // Flatten a standing stone into a flat stone.
     {
@@ -65,6 +62,7 @@ public:
     bool is_empty() { return stones.empty(); };
     void add_stone(Stone);
     Stone get_stone();
+    bool is_road_square(const char &);
 };
 
 class Board
@@ -101,17 +99,18 @@ private:
         {Square(), Square(), Square(), Square(), Square()},
         {Square(), Square(), Square(), Square(), Square()},
     };
-    const char &get_active_player() { return active_player; };
-    bool player_has_capstone(const char &);
-    bool player_has_stones(const char &);
+    // const char &get_active_player() { return active_player; };
+    bool player_has_capstone();
+    bool player_has_stones();
     Stone take_stone_from_reserve(const char &);
-    Stone take_capstone(const char &);
-    Stone take_stone(const char &, const char &);
+    Stone take_capstone();
+    Stone take_stone(const char &);
 
 public:
     Board();
     void place_stone(const int &, const int &, const Stone); // Remove eventually.
     void execute_ptn_move(const string &);                   // move to private eventually.
+    bool player_has_road();                                  // move to private eventually.
     vector<int> get_legal_moves_for_player(char);
     int do_move(const string &);
 };

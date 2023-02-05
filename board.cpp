@@ -18,7 +18,7 @@ void Square::add_stone(Stone stone)
 {
     if (!is_empty())
     {
-        char &top_stone_type = stones.top().get_type();
+        char &top_stone_type = stones.top().type;
         if (top_stone_type == 'S' | top_stone_type == 'C')
         {
             throw runtime_error("Attempting to place a stone on top of a standing- or capstone.");
@@ -41,6 +41,23 @@ Stone Square::get_stone()
     return stone;
 }
 
+/************************************************************************
+Check if the top piece is the stack is elligible for a road for a player.
+************************************************************************/
+bool Square::is_road_square(const char &active_player)
+{
+    if (is_empty())
+    {
+        return false;
+    }
+    Stone &stone = stones.top();
+    if ((stone.color == active_player) && ((stone.type == 'F') | ((stone.type == 'C'))))
+    {
+        return true;
+    }
+    return false;
+}
+
 /**************
 BOARD FUNCTIONS
 **************/
@@ -50,95 +67,167 @@ Board::Board()
 }
 
 /********************************************************
-Check if player has a capstone in their reserve.
+Check if active player has a capstone in their reserve.
 ********************************************************/
-bool Board::player_has_capstone(const char &player)
+bool Board::player_has_capstone()
 {
-    if (player == 'W')
+    if (active_player == 'W')
     {
         return white_capstone > 0;
     }
-    else if (player == 'B')
+    else if (active_player == 'B')
     {
         return black_capstone > 0;
     }
     else
     {
-        throw runtime_error("Player has been defined incorrectly.");
+        throw runtime_error("Active player has been defined incorrectly.");
     }
 };
 
 /********************************************************
-Check if player has stones left in their reserve.
+Check if active player has stones left in their reserve.
 ********************************************************/
-bool Board::player_has_stones(const char &player)
+bool Board::player_has_stones()
 {
-    if (player == 'W')
+    if (active_player == 'W')
     {
         return white_stone_reserve > 0;
     }
-    else if (player == 'B')
+    else if (active_player == 'B')
     {
         return black_stone_reserve > 0;
     }
     else
     {
-        throw runtime_error("Player has been defined incorrectly.");
+        throw runtime_error("Active player has been defined incorrectly.");
     }
 };
 
 /********************************************************
-Take a player's capstone from their reserve.
+Check if the active player has a road on the board.
 ********************************************************/
-Stone Board::take_capstone(const char &player)
+bool Board::player_has_road()
 {
-    if (player == 'W')
+    // Create a road array. This is an array with the same size as the board.
+    // It contains 1 if the square is eligible for a road, i.e.,
+    // the square contains a flat piece of the capstone on the top of the stack.
+    // It contains a 0 otherwise.
+    int road_array[5][5] = {
+        {0, 0, 0, 0, 0},
+        {0, 0, 0, 0, 0},
+        {0, 0, 0, 0, 0},
+        {0, 0, 0, 0, 0},
+        {0, 0, 0, 0, 0},
+    };
+
+    // We can end the search early by checking whether there are road pieces
+    // both at the top and bottom of the board, or both at the left and right.
+    // Otherwise, a road is not possible.
+    bool top = false, bottom = false, left = false, right = false;
+    int bottom_edge = 0;
+    int top_edge = 4;
+    for (int i = 0; i < 5; i++)
+    {
+        if (squares[bottom_edge][i].is_road_square(active_player)) // Checks left edge bottom-top
+        {
+            road_array[bottom_edge][i] = 1;
+            left = true;
+        }
+        if (squares[top_edge][i].is_road_square(active_player)) // Checks right edge bottom-top
+        {
+            road_array[top_edge][i] = 1;
+            right = true;
+        }
+        if (squares[i][top_edge].is_road_square(active_player)) // Checks top edge left-right
+        {
+            road_array[i][top_edge] = 1;
+            top = true;
+        }
+        if (squares[i][bottom_edge].is_road_square(active_player)) // Checks bottom edge left-right
+        {
+            road_array[i][bottom_edge] = 1;
+            bottom = true;
+        }
+    }
+    if (!((top && bottom) | (left && right)))
+    {
+        // A road is not possible
+        return false;
+    }
+
+    // A road might be possible, so continue building the road array.
+    for (int file = 1; file < 4; file++)
+    {
+        for (int rank = 1; rank < 4; rank++)
+        {
+            if (squares[file][rank].is_road_square(active_player))
+            {
+                road_array[file][rank] = 1;
+            }
+        }
+    }
+
+    if (find_road(road_array))
+    {
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+}
+
+/********************************************************
+Take the active player's capstone from their reserve.
+********************************************************/
+Stone Board::take_capstone()
+{
+    if (active_player == 'W')
     {
         white_capstone = 0;
     }
-    else if (player == 'B')
+    else if (active_player == 'B')
     {
         black_capstone = 0;
     }
     else
     {
-        throw runtime_error("Player has been defined incorrectly.");
+        throw runtime_error("Active player has been defined incorrectly.");
     }
-    return Stone(player, 'C');
+    return Stone(active_player, 'C');
 };
 
 /********************************************************
-Take a regular stone from the player's reserve.
+Take a regular stone from the active player's reserve.
 ********************************************************/
-Stone Board::take_stone(const char &player, const char &stone_type)
+Stone Board::take_stone(const char &stone_type)
 {
-    if (player == 'W')
+    if (active_player == 'W')
     {
         white_stone_reserve--;
     }
-    else if (player == 'B')
+    else if (active_player == 'B')
     {
         black_stone_reserve--;
     }
     else
     {
-        throw runtime_error("Player has been defined incorrectly.");
+        throw runtime_error("Active player has been defined incorrectly.");
     }
-    return Stone(player, stone_type);
+    return Stone(active_player, stone_type);
 };
 
 /********************************************************
-Take a stone from a player's reserve.
+Take a stone from the active player's reserve.
 ********************************************************/
 Stone Board::take_stone_from_reserve(const char &stone_type)
 {
-    const char &active_player = get_active_player();
-
     if (stone_type == 'C')
     {
-        if (player_has_capstone(active_player))
+        if (player_has_capstone())
         {
-            return take_capstone(active_player);
+            return take_capstone();
         }
         else
         {
@@ -148,9 +237,9 @@ Stone Board::take_stone_from_reserve(const char &stone_type)
     }
     else if (stone_type == 'F' | stone_type == 'S')
     {
-        if (player_has_stones(active_player))
+        if (player_has_stones())
         {
-            return take_stone(active_player, stone_type);
+            return take_stone(stone_type);
         }
         else
         {
@@ -268,6 +357,9 @@ Return 1 if the game ends, 0 if it does not.
     return 1;
 };
 
+/**************
+TEST FUNCTIONS
+**************/
 void test_placing_stones()
 {
     Board board = Board();
@@ -294,8 +386,75 @@ void test_moving_stones()
     board.execute_ptn_move(move_stack);
 }
 
+void test_find_vertical_road()
+{
+    // There is a road
+    Board board = Board();
+    board.place_stone(0, 0, Stone('W', 'F'));
+    board.place_stone(1, 0, Stone('W', 'F'));
+    board.place_stone(1, 1, Stone('W', 'F'));
+    board.place_stone(2, 1, Stone('W', 'F'));
+    board.place_stone(3, 1, Stone('W', 'C'));
+    board.place_stone(3, 2, Stone('W', 'F'));
+    board.place_stone(3, 3, Stone('W', 'F'));
+    board.place_stone(3, 4, Stone('W', 'F'));
+    if (board.player_has_road())
+    {
+        cout << "Player has a road." << endl;
+    }
+    else
+    {
+        cout << "Player does not have a road." << endl;
+    }
+}
+
+void test_find_horizontal_road()
+{
+    // There is a road
+    Board board = Board();
+    board.place_stone(0, 4, Stone('W', 'F'));
+    board.place_stone(1, 4, Stone('W', 'F'));
+    board.place_stone(1, 3, Stone('W', 'F'));
+    board.place_stone(1, 2, Stone('W', 'C'));
+    board.place_stone(2, 2, Stone('W', 'F'));
+    board.place_stone(3, 2, Stone('W', 'F'));
+    board.place_stone(4, 2, Stone('W', 'F'));
+    if (board.player_has_road())
+    {
+        cout << "Player has a road." << endl;
+    }
+    else
+    {
+        cout << "Player does not have a road." << endl;
+    }
+}
+
+void test_find_road_blocked()
+{
+    // There is a road
+    Board board = Board();
+    board.place_stone(0, 4, Stone('W', 'F'));
+    board.place_stone(1, 4, Stone('W', 'F'));
+    board.place_stone(1, 3, Stone('W', 'F'));
+    board.place_stone(1, 2, Stone('W', 'C'));
+    board.place_stone(2, 2, Stone('W', 'F'));
+    board.place_stone(3, 2, Stone('W', 'S'));
+    board.place_stone(4, 2, Stone('W', 'F'));
+    if (board.player_has_road())
+    {
+        cout << "Player has a road." << endl;
+    }
+    else
+    {
+        cout << "Player does not have a road." << endl;
+    }
+}
+
 int main()
 {
     // test_placing_stones();
-    test_moving_stones();
+    // test_moving_stones();
+    test_find_vertical_road();
+    test_find_horizontal_road();
+    test_find_road_blocked();
 }

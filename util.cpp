@@ -1,6 +1,7 @@
 #include <string>
 #include <stdexcept>
 #include <map>
+#include <queue>
 #include <vector>
 #include <algorithm>
 #include "util.h"
@@ -158,4 +159,120 @@ map<int, string> enumerate_all_ptn_moves()
         i++;
     }
     return all_ptn_moves_map;
+}
+
+/*************************************
+Find a road in a road array.
+*************************************/
+/*
+A road array is an array with the same size as the board.
+It contains 1 if the square is eligible for a road, i.e.,
+the square contains a flat piece of the capstone on the top of the stack.
+It contains a 0 otherwise.
+
+int road_array[5][5] = {
+    {0, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0},
+};
+*/
+
+bool find_road(int (&road_array)[5][5])
+{
+    // Setup
+    int road_array_copy[5][5];
+    for (int file = 0; file < 5; file++)
+    {
+        for (int rank = 0; rank < 5; rank++)
+        {
+            road_array_copy[file][rank] = road_array[file][rank];
+        }
+    }
+    int dir[4][2] = {{0, 1}, {0, -1}, {1, 0}, {-1, 0}};
+    int row = 5;
+    int col = 5;
+    queue<pair<int, int>> vertical_q;
+    queue<pair<int, int>> horizontal_q;
+    bool vertical = false, horizontal = false;
+
+    // Vertical: start searching from the bottom edge
+    for (int i = 0; i < 5; i++)
+    {
+        if (road_array[i][0] == 1)
+        {
+            vertical_q.push(make_pair(i, 0));
+            vertical = true;
+        }
+    }
+    // horizontal: start searching from the left edge
+    for (int i = 0; i < 5; i++)
+    {
+        if (road_array_copy[0][i] == 1)
+        {
+            horizontal_q.push(make_pair(0, i));
+            horizontal = true;
+        }
+    }
+
+    // Perform vertical search until queue is empty
+    while (vertical_q.size() > 0)
+    {
+        pair<int, int> p = vertical_q.front();
+        vertical_q.pop();
+
+        // mark as visited
+        road_array[p.first][p.second] = -1;
+
+        // The top of the board is reached - there is a vertical road
+        if (p.second == 4)
+            return true;
+
+        // check all four directions
+        for (int i = 0; i < 4; i++)
+        {
+            // using the direction array
+            int a = p.first + dir[i][0];
+            int b = p.second + dir[i][1];
+
+            // not blocked and road square
+            if (road_array[a][b] > 0 && a >= 0 && b >= 0 && a < row && b < col)
+            {
+                vertical_q.push(make_pair(a, b));
+            }
+        }
+    }
+
+    // Perform horizontal search until queue is empty
+    while (horizontal_q.size() > 0)
+    {
+        pair<int, int> p = horizontal_q.front();
+        horizontal_q.pop();
+
+        // mark as visited
+        road_array_copy[p.first][p.second] = -1;
+
+        // The right edge of the board is reached - there is a horizontal road
+        if (p.first == 4)
+            return true;
+
+        // check all four directions
+        for (int i = 0; i < 4; i++)
+        {
+            // using the direction array
+            int a = p.first + dir[i][0];
+            int b = p.second + dir[i][1];
+
+            // not blocked and road square
+            // The first conditional makes sure the piece is not blocked or already visited
+            if (road_array_copy[a][b] > 0 && a >= 0 && b >= 0 && a < row && b < col)
+            {
+                horizontal_q.push(make_pair(a, b));
+            }
+        }
+    }
+
+    // default
+    return false;
 }
