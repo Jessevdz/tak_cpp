@@ -2,6 +2,9 @@
 #include <iostream>
 #include <string>
 #include <map>
+#include <random>
+std::random_device rd;  // Only used once to initialise (seed) engine
+std::mt19937 rng(rd()); // Random-number engine used (Mersenne-Twister in this case)
 #include "util.h"
 #include "board.h"
 
@@ -19,9 +22,21 @@ void Square::add_stone(Stone stone)
     if (!is_empty())
     {
         char &top_stone_type = stones.top().type;
-        if (top_stone_type == 'S' | top_stone_type == 'C')
+        if (top_stone_type == 'C')
         {
-            throw runtime_error("Attempting to place a stone on top of a standing- or capstone.");
+            throw runtime_error("Attempting to place a stone on top of a capstone.");
+        }
+        if (top_stone_type == 'S')
+        {
+            if (stone.type == 'C')
+            {
+                // Flatten standing stone
+                stones.top().flatten();
+            }
+            else
+            {
+                throw runtime_error("Attempting to place a stone on top of a standing stone.");
+            }
         }
     }
     stones.push(stone);
@@ -295,7 +310,7 @@ Stone Board::take_stone_from_reserve(const char &stone_type)
 /*************************************************************
 Return a mask indicating valid PTN moves for the active player.
 *************************************************************/
-vector<int> Board::valid_moves()
+vector<string> Board::valid_moves()
 {
     // Gather necessary state from the board
 
@@ -320,10 +335,6 @@ vector<int> Board::valid_moves()
         {'E', 'E', 'E', 'E', 'E'},
     };
 
-    // File-to-rank map of squares that contain blocking pieces.
-    map<int, int> blocking_files;
-    map<int, int> blocking_ranks; // Rank-to-file
-
     // Populate the arrays
     for (int file = 0; file < 5; file++)
     {
@@ -334,11 +345,6 @@ vector<int> Board::valid_moves()
                 control_array[file][rank] = 1;
             }
             stone_type_array[file][rank] = squares[file][rank].get_top_stone_type();
-            if (squares[file][rank].is_blocking())
-            {
-                blocking_files[file] = rank;
-                blocking_ranks[rank] = file;
-            }
         }
     }
 
@@ -378,12 +384,7 @@ vector<int> Board::valid_moves()
     }
 
     // Enumerate all valid PTN moves for active player
-    /*
-    TODO: Edge case with capstones flattening standing stones.
-    */
     vector<string> valid_ptn_moves;
-    bool check_blocking_file = false;
-    bool check_blocking_rank = false;
     for (int file = 0; file < 5; file++)
     {
         for (int rank = 0; rank < 5; rank++)
@@ -395,7 +396,7 @@ vector<int> Board::valid_moves()
             {
                 for (const string t : valid_stone_types)
                 {
-                    string m = t + to_string(file) + to_string(rank);
+                    string m = t + _index_to_file[file] + to_string(rank + 1);
                     valid_ptn_moves.push_back(m);
                 }
             }
@@ -408,66 +409,100 @@ vector<int> Board::valid_moves()
                 int stack_size = squares[file][rank].get_size();
                 if (stack_size > 5)
                     stack_size = 5;
-                // Are there any blocking stones in this file and rank?
-                if (blocking_files.find(file) != blocking_files.end())
-                {
-                    check_blocking_file = true;
-                }
-                if (blocking_ranks.find(rank) != blocking_ranks.end())
-                {
-                    check_blocking_rank = true;
-                }
                 int movement_squares;
+                // Indicate whether the current stone is a capstone, and we can use it to flatten a standing stone in our path
+                bool top_is_capstone = (stone_type_array[file][rank] == 'C');
+                bool capstone_can_flatten = false;
                 for (string dr : _directions)
                 {
                     // Figure out how far we can move in each direction
                     movement_squares = 0;
                     if (dr == "+")
                     {
-                        if (check_blocking_file)
+                        int cur_rank = rank;
+                        while (cur_rank < 4)
                         {
-                            int blocking_rank = blocking_files[file];
-                            movement_squares = 4 - blocking_rank - 1;
-                        }
-                        else
-                        {
-                            movement_squares = 4 - rank;
+                            cur_rank++;
+                            if (stone_type_array[file][cur_rank] == 'C')
+                            {
+                                break;
+                            }
+                            if (stone_type_array[file][cur_rank] == 'S')
+                            {
+                                if (top_is_capstone)
+                                {
+                                    movement_squares += 1;
+                                    capstone_can_flatten = true;
+                                }
+                                break;
+                            }
+                            movement_squares += 1;
                         }
                     }
                     if (dr == "-")
                     {
-                        if (check_blocking_file)
+                        int cur_rank = rank;
+                        while (cur_rank > 0)
                         {
-                            int blocking_rank = blocking_files[file];
-                            movement_squares = rank - blocking_rank - 1;
-                        }
-                        else
-                        {
-                            movement_squares = rank;
+                            cur_rank--;
+                            if (stone_type_array[file][cur_rank] == 'C')
+                            {
+                                break;
+                            }
+                            if (stone_type_array[file][cur_rank] == 'S')
+                            {
+                                if (top_is_capstone)
+                                {
+                                    movement_squares += 1;
+                                    capstone_can_flatten = true;
+                                }
+                                break;
+                            }
+                            movement_squares += 1;
                         }
                     }
                     if (dr == ">")
                     {
-                        if (check_blocking_rank)
+                        int cur_file = file;
+                        while (cur_file < 4)
                         {
-                            int blocking_file = blocking_ranks[rank];
-                            movement_squares = blocking_file - 1;
-                        }
-                        else
-                        {
-                            movement_squares = 4 - file;
+                            cur_file++;
+                            if (stone_type_array[cur_file][rank] == 'C')
+                            {
+                                break;
+                            }
+                            if (stone_type_array[cur_file][rank] == 'S')
+                            {
+                                if (top_is_capstone)
+                                {
+                                    movement_squares += 1;
+                                    capstone_can_flatten = true;
+                                }
+                                break;
+                            }
+                            movement_squares += 1;
                         }
                     }
                     if (dr == "<")
                     {
-                        if (check_blocking_rank)
+                        int cur_file = file;
+                        while (cur_file > 0)
                         {
-                            int blocking_file = blocking_ranks[rank];
-                            movement_squares = file - blocking_file - 1;
-                        }
-                        else
-                        {
-                            movement_squares = file;
+                            cur_file--;
+                            if (stone_type_array[cur_file][rank] == 'C')
+                            {
+                                break;
+                            }
+                            if (stone_type_array[cur_file][rank] == 'S')
+                            {
+                                if (top_is_capstone)
+                                {
+                                    movement_squares += 1;
+                                    capstone_can_flatten = true;
+                                }
+                                break;
+                            }
+                            movement_squares += 1;
                         }
                     }
 
@@ -480,11 +515,19 @@ vector<int> Board::valid_moves()
                         // Enumerate the movement strings
                         // stack_size == how many stones we can move from this position
                         // movement_squares == how many squares we can move them in
-                        for (int nr_stones = 0; nr_stones <= stack_size; nr_stones++)
+                        for (int nr_stones = 1; nr_stones <= stack_size; nr_stones++)
                         {
-                            for (int nr_sq = 0; nr_sq <= movement_squares; nr_sq++)
+                            for (int nr_sq = 1; nr_sq <= movement_squares; nr_sq++)
                             {
-                                vector<string> drop_counts = _valid_drop_counts_move_squares[nr_stones][nr_sq];
+                                vector<string> drop_counts;
+                                if (capstone_can_flatten)
+                                {
+                                    drop_counts = _valid_drop_counts_move_squares_wcapstone[nr_stones][nr_sq];
+                                }
+                                else
+                                {
+                                    drop_counts = _valid_drop_counts_move_squares[nr_stones][nr_sq];
+                                }
                                 for (string dc : drop_counts)
                                 {
                                     string m = to_string(nr_stones) + _index_to_file[file] + to_string(rank + 1) + dr + dc;
@@ -494,14 +537,10 @@ vector<int> Board::valid_moves()
                         }
                     }
                 }
-                // safety
-                check_blocking_file = false;
-                check_blocking_rank = false;
             }
         }
     }
-    vector<int> ret;
-    return ret;
+    return valid_ptn_moves;
 }
 /********************************************************
 TODO Remove eventually.
@@ -604,7 +643,16 @@ Switch the active player
 Return 1 if the game ends, 0 if it does not.
 */
 {
-    return 1;
+    execute_ptn_move(ptn_move);
+    if (player_has_road())
+    {
+        return 1;
+    }
+    else
+    {
+        switch_active_player();
+    }
+    return 0;
 };
 
 /**************
@@ -705,13 +753,31 @@ void test_find_moves()
     // There is a road
     Board board = Board();
     board.place_stone(0, 4, Stone('W', 'F'));
+    board.place_stone(1, 4, Stone('W', 'F'));
     board.place_stone(1, 4, Stone('W', 'S'));
     board.place_stone(1, 3, Stone('W', 'F'));
+    board.place_stone(1, 2, Stone('W', 'F'));
+    board.place_stone(1, 2, Stone('W', 'F'));
     board.place_stone(1, 2, Stone('W', 'C'));
     board.place_stone(2, 2, Stone('W', 'F'));
     board.place_stone(3, 2, Stone('W', 'S'));
     board.place_stone(4, 2, Stone('W', 'F'));
     board.valid_moves();
+}
+
+void test_play_random_game()
+{
+    Board board = Board();
+    int game_is_done = 0;
+    while (game_is_done < 1)
+    {
+        vector<string> valid_moves = board.valid_moves();
+        uniform_int_distribution<int> uni(0, valid_moves.size()); // Guaranteed unbiased
+        int random_index = uni(rng);
+        string ptn_move = valid_moves[random_index];
+        game_is_done = board.do_move(ptn_move);
+    }
+    std::cout << " test";
 }
 
 int main()
@@ -721,5 +787,6 @@ int main()
     // test_find_vertical_road();
     // test_find_horizontal_road();
     // test_find_road_blocked();
-    test_find_moves();
+    // test_find_moves();
+    test_play_random_game();
 }

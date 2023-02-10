@@ -85,13 +85,24 @@ private:
     Stone take_stone_from_reserve(const char &);
     Stone take_capstone();
     Stone take_stone(const char &);
+    void switch_active_player()
+    {
+        if (active_player == 'W')
+        {
+            active_player = 'B';
+        }
+        else
+        {
+            active_player = 'W';
+        }
+    };
 
 public:
     Board();
     void place_stone(const int &, const int &, const Stone); // Remove eventually.
     void execute_ptn_move(const string &);                   // move to private eventually.
     bool player_has_road();                                  // move to private eventually.
-    vector<int> valid_moves();                               // move to private eventually.
+    vector<string> valid_moves();                            // move to private eventually.
     vector<int> get_legal_moves_for_player(char);
     int do_move(const string &);
 };

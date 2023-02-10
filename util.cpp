@@ -125,6 +125,36 @@ map<int, map<int, vector<string>>>
         {4, _move_four},
         {5, _move_five},
     };
+// Mapping between how many stones we can move, AND how many squares we can move in a direction
+// With the top capstone flatterning a standing stone at the last square we can reach.
+// Drop counts must all end with 1
+map<int, vector<string>> _move_one_c{{1, {"1000"}}};
+map<int, vector<string>> _move_two_c{{1, {"2000"}}, {2, {"1100"}}};
+map<int, vector<string>> _move_three_c{
+    {1, {"3000"}},
+    {2, {"2100"}},
+    {3, {"1110"}},
+};
+map<int, vector<string>> _move_four_c{
+    {1, {"4000"}},
+    {2, {"3100"}},
+    {3, {"2110", "1210"}},
+    {4, {"1111"}},
+};
+map<int, vector<string>> _move_five_c{
+    {1, {"5000"}},
+    {2, {"4100"}},
+    {3, {"3110", "2210", "1310"}},
+    {4, {"2111", "1211", "1121"}},
+};
+map<int, map<int, vector<string>>>
+    _valid_drop_counts_move_squares_wcapstone{
+        {1, _move_one_c},
+        {2, _move_two_c},
+        {3, _move_three_c},
+        {4, _move_four_c},
+        {5, _move_five_c},
+    };
 vector<string> _file{"A", "B", "C", "D", "E"};
 vector<string> _rank{"1", "2", "3", "4", "5"};
 vector<string> _stone_type{"C", "F", "S"};

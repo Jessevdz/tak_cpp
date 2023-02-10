@@ -15,6 +15,7 @@ extern map<string, int> _file_to_index;
 extern map<int, string> _index_to_file;
 extern map<string, vector<string>> _valid_drop_counts;
 extern map<int, map<int, vector<string>>> _valid_drop_counts_move_squares;
+extern map<int, map<int, vector<string>>> _valid_drop_counts_move_squares_wcapstone;
 extern vector<string> _file;
 extern vector<string> _rank;
 extern vector<string> _stone_type;
