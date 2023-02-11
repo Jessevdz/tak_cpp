@@ -522,6 +522,9 @@ vector<string> Board::valid_moves()
                                 vector<string> drop_counts;
                                 if (capstone_can_flatten)
                                 {
+                                    // Some invalid combinations exist here, trying to drop a stack with a capstone on top of a standing stone
+                                    if (nr_sq == 1 & nr_stones != 1)
+                                        break;
                                     drop_counts = _valid_drop_counts_move_squares_wcapstone[nr_stones][nr_sq];
                                 }
                                 else
@@ -753,13 +756,15 @@ void test_find_moves()
     // There is a road
     Board board = Board();
     board.place_stone(0, 4, Stone('W', 'F'));
-    board.place_stone(1, 4, Stone('W', 'F'));
     board.place_stone(1, 4, Stone('W', 'S'));
+    board.place_stone(1, 3, Stone('W', 'F'));
+    board.place_stone(1, 3, Stone('W', 'F'));
+    board.place_stone(1, 3, Stone('W', 'F'));
     board.place_stone(1, 3, Stone('W', 'F'));
     board.place_stone(1, 2, Stone('W', 'F'));
     board.place_stone(1, 2, Stone('W', 'F'));
     board.place_stone(1, 2, Stone('W', 'C'));
-    board.place_stone(2, 2, Stone('W', 'F'));
+    board.place_stone(2, 2, Stone('W', 'S'));
     board.place_stone(3, 2, Stone('W', 'S'));
     board.place_stone(4, 2, Stone('W', 'F'));
     board.valid_moves();
@@ -772,9 +777,10 @@ void test_play_random_game()
     while (game_is_done < 1)
     {
         vector<string> valid_moves = board.valid_moves();
-        uniform_int_distribution<int> uni(0, valid_moves.size()); // Guaranteed unbiased
+        uniform_int_distribution<int> uni(0, valid_moves.size() - 1); // Guaranteed unbiased
         int random_index = uni(rng);
-        string ptn_move = valid_moves[random_index];
+        string ptn_move;
+        ptn_move = valid_moves[random_index];
         game_is_done = board.do_move(ptn_move);
     }
     std::cout << " test";

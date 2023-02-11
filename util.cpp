@@ -129,20 +129,17 @@ map<int, map<int, vector<string>>>
 // With the top capstone flatterning a standing stone at the last square we can reach.
 // Drop counts must all end with 1
 map<int, vector<string>> _move_one_c{{1, {"1000"}}};
-map<int, vector<string>> _move_two_c{{1, {"2000"}}, {2, {"1100"}}};
+map<int, vector<string>> _move_two_c{{2, {"1100"}}};
 map<int, vector<string>> _move_three_c{
-    {1, {"3000"}},
     {2, {"2100"}},
     {3, {"1110"}},
 };
 map<int, vector<string>> _move_four_c{
-    {1, {"4000"}},
     {2, {"3100"}},
     {3, {"2110", "1210"}},
     {4, {"1111"}},
 };
 map<int, vector<string>> _move_five_c{
-    {1, {"5000"}},
     {2, {"4100"}},
     {3, {"3110", "2210", "1310"}},
     {4, {"2111", "1211", "1121"}},
