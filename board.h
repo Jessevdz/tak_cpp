@@ -40,8 +40,15 @@ public:
     bool is_blocking();
     void add_stone(Stone);
     Stone get_stone();
+    const Stone &peek_top_stone();
     char get_top_stone_type();
     int get_size() { return stones.size(); };
+};
+
+struct WinConditions
+{
+    bool game_ends;
+    char winner;
 };
 
 class Board
@@ -79,9 +86,10 @@ private:
         {Square(), Square(), Square(), Square(), Square()},
         {Square(), Square(), Square(), Square(), Square()},
     };
-    // const char &get_active_player() { return active_player; };
     bool player_has_capstone();
     bool player_has_stones();
+    bool board_is_full();
+    char check_flat_win();
     Stone take_stone_from_reserve(const char &);
     Stone take_capstone();
     Stone take_stone(const char &);
@@ -96,6 +104,7 @@ private:
             active_player = 'W';
         }
     };
+    WinConditions check_win_conditions();
 
 public:
     Board();

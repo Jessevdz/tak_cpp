@@ -56,6 +56,15 @@ Stone Square::get_stone()
     return stone;
 }
 
+/*********************************
+Return a reference to the top stone
+**********************************/
+const Stone &Square::peek_top_stone()
+{
+    const Stone &stone = stones.top();
+    return stone;
+}
+
 /************************************************************************
 Check if the top piece of the stack is elligible for a road for a player.
 ************************************************************************/
@@ -230,6 +239,59 @@ bool Board::player_has_road()
     {
         return false;
     }
+}
+
+/********************************************************
+Check if there are no empty squares on the board.
+********************************************************/
+bool Board::board_is_full()
+{
+    for (int file = 0; file < 5; file++)
+    {
+        for (int rank = 0; rank < 5; rank++)
+        {
+            if (squares[file][rank].is_empty())
+            {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+/********************************************************
+Return the player chart hat has the most controlling
+flat stones on the board. Return "T" if it is a tie.
+********************************************************/
+char Board::check_flat_win()
+{
+    int black = 0, white = 0;
+    for (int file = 0; file < 5; file++)
+    {
+        for (int rank = 0; rank < 5; rank++)
+        {
+            if (!squares[file][rank].is_empty())
+            {
+                const Stone &top_stone = squares[file][rank].peek_top_stone();
+                if (top_stone.type == 'F')
+                {
+                    if (top_stone.color == 'W')
+                    {
+                        white++;
+                    }
+                    else
+                    {
+                        black++;
+                    }
+                }
+            }
+        }
+    }
+    if (black == white)
+        return 'T';
+    else if (black > white)
+        return 'B';
+    return 'W';
 }
 
 /********************************************************
@@ -638,13 +700,32 @@ void Board::execute_ptn_move(const string &ptn_move)
     }
 };
 
-int Board::do_move(const string &ptn_move)
-/*
+/********************************************************
+Check if the game has ended, and return information on
+the winning player.
+********************************************************/
+WinConditions Board::check_win_conditions()
+{
+    // If at least one player is out of stones,
+    // or the board has no empty squares, check for a flat win.
+    bool white_reserve_empty = (white_stone_reserve + white_capstone == 0);
+    bool black_reserve_empty = (black_stone_reserve + black_capstone == 0);
+    bool board_full = board_is_full();
+    if (white_reserve_empty | black_reserve_empty | board_full)
+    {
+        char winner = check_flat_win();
+        WinConditions win_conditions = {true, winner};
+        return win_conditions;
+    }
+    // Both players can have roads
+}
+/********************************************************
 Execute the PTN move
 Check end-of-game criteria
 Switch the active player
-Return 1 if the game ends, 0 if it does not.
-*/
+Return win conditions
+********************************************************/
+int Board::do_move(const string &ptn_move)
 {
     execute_ptn_move(ptn_move);
     if (player_has_road())
