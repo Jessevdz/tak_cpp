@@ -126,7 +126,7 @@ map<int, map<int, vector<string>>>
         {5, _move_five},
     };
 // Mapping between how many stones we can move, AND how many squares we can move in a direction
-// With the top capstone flatterning a standing stone at the last square we can reach.
+// WITH the top capstone flatterning a standing stone at the last square we can reach.
 // Drop counts must all end with 1
 map<int, vector<string>> _move_one_c{{1, {"1000"}}};
 map<int, vector<string>> _move_two_c{{2, {"1100"}}};
