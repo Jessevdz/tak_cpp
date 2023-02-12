@@ -49,6 +49,7 @@ struct WinConditions
 {
     bool game_ends;
     char winner;
+    string win_type;
 };
 
 class Board
@@ -110,10 +111,10 @@ public:
     Board();
     void place_stone(const int &, const int &, const Stone); // Remove eventually.
     void execute_ptn_move(const string &);                   // move to private eventually.
-    bool player_has_road();                                  // move to private eventually.
+    bool player_has_road(const char &);                      // move to private eventually.
     vector<string> valid_moves();                            // move to private eventually.
     vector<int> get_legal_moves_for_player(char);
-    int do_move(const string &);
+    WinConditions do_move(const string &);
 };
 
 #endif // BOARD_H

@@ -3,6 +3,7 @@
 #include <string>
 #include <map>
 #include <random>
+#include <chrono>
 std::random_device rd;  // Only used once to initialise (seed) engine
 std::mt19937 rng(rd()); // Random-number engine used (Mersenne-Twister in this case)
 #include "util.h"
@@ -170,7 +171,7 @@ bool Board::player_has_stones()
 /********************************************************
 Check if the active player has a road on the board.
 ********************************************************/
-bool Board::player_has_road()
+bool Board::player_has_road(const char &player)
 {
     // Create a road array. This is an array with the same size as the board.
     // It contains 1 if the square is eligible for a road, i.e.,
@@ -192,22 +193,22 @@ bool Board::player_has_road()
     int top_edge = 4;
     for (int i = 0; i < 5; i++)
     {
-        if (squares[bottom_edge][i].is_road_square(active_player)) // Checks left edge bottom-top
+        if (squares[bottom_edge][i].is_road_square(player)) // Checks left edge bottom-top
         {
             road_array[bottom_edge][i] = 1;
             left = true;
         }
-        if (squares[top_edge][i].is_road_square(active_player)) // Checks right edge bottom-top
+        if (squares[top_edge][i].is_road_square(player)) // Checks right edge bottom-top
         {
             road_array[top_edge][i] = 1;
             right = true;
         }
-        if (squares[i][top_edge].is_road_square(active_player)) // Checks top edge left-right
+        if (squares[i][top_edge].is_road_square(player)) // Checks top edge left-right
         {
             road_array[i][top_edge] = 1;
             top = true;
         }
-        if (squares[i][bottom_edge].is_road_square(active_player)) // Checks bottom edge left-right
+        if (squares[i][bottom_edge].is_road_square(player)) // Checks bottom edge left-right
         {
             road_array[i][bottom_edge] = 1;
             bottom = true;
@@ -224,7 +225,7 @@ bool Board::player_has_road()
     {
         for (int rank = 1; rank < 4; rank++)
         {
-            if (squares[file][rank].is_road_square(active_player))
+            if (squares[file][rank].is_road_square(player))
             {
                 road_array[file][rank] = 1;
             }
@@ -706,6 +707,7 @@ the winning player.
 ********************************************************/
 WinConditions Board::check_win_conditions()
 {
+    WinConditions win_conditions;
     // If at least one player is out of stones,
     // or the board has no empty squares, check for a flat win.
     bool white_reserve_empty = (white_stone_reserve + white_capstone == 0);
@@ -714,29 +716,37 @@ WinConditions Board::check_win_conditions()
     if (white_reserve_empty | black_reserve_empty | board_full)
     {
         char winner = check_flat_win();
-        WinConditions win_conditions = {true, winner};
+        win_conditions = {true, winner, "flat win"};
         return win_conditions;
     }
-    // Both players can have roads
+    // Both players could have roads
+    else if (player_has_road('W'))
+    {
+        win_conditions = {true, 'W', "road"};
+    }
+    else if (player_has_road('B'))
+    {
+        win_conditions = {true, 'B', "road"};
+    }
+    else
+    {
+        win_conditions = {false, 'T', ""};
+    }
+    return win_conditions;
 }
+
 /********************************************************
 Execute the PTN move
 Check end-of-game criteria
 Switch the active player
 Return win conditions
 ********************************************************/
-int Board::do_move(const string &ptn_move)
+WinConditions Board::do_move(const string &ptn_move)
 {
     execute_ptn_move(ptn_move);
-    if (player_has_road())
-    {
-        return 1;
-    }
-    else
-    {
-        switch_active_player();
-    }
-    return 0;
+    WinConditions win_conditions = check_win_conditions();
+    switch_active_player();
+    return win_conditions;
 };
 
 /**************
@@ -780,7 +790,7 @@ void test_find_vertical_road()
     board.place_stone(3, 2, Stone('W', 'F'));
     board.place_stone(3, 3, Stone('W', 'F'));
     board.place_stone(3, 4, Stone('W', 'F'));
-    if (board.player_has_road())
+    if (board.player_has_road('W'))
     {
         cout << "Player has a road." << endl;
     }
@@ -801,7 +811,7 @@ void test_find_horizontal_road()
     board.place_stone(2, 2, Stone('W', 'F'));
     board.place_stone(3, 2, Stone('W', 'F'));
     board.place_stone(4, 2, Stone('W', 'F'));
-    if (board.player_has_road())
+    if (board.player_has_road('W'))
     {
         cout << "Player has a road." << endl;
     }
@@ -822,7 +832,7 @@ void test_find_road_blocked()
     board.place_stone(2, 2, Stone('W', 'F'));
     board.place_stone(3, 2, Stone('W', 'S'));
     board.place_stone(4, 2, Stone('W', 'F'));
-    if (board.player_has_road())
+    if (board.player_has_road('W'))
     {
         cout << "Player has a road." << endl;
     }
@@ -854,17 +864,17 @@ void test_find_moves()
 void test_play_random_game()
 {
     Board board = Board();
-    int game_is_done = 0;
-    while (game_is_done < 1)
+    WinConditions win_conditions = {false, 'T'};
+    while (!win_conditions.game_ends)
     {
         vector<string> valid_moves = board.valid_moves();
         uniform_int_distribution<int> uni(0, valid_moves.size() - 1); // Guaranteed unbiased
         int random_index = uni(rng);
         string ptn_move;
         ptn_move = valid_moves[random_index];
-        game_is_done = board.do_move(ptn_move);
+        win_conditions = board.do_move(ptn_move);
     }
-    std::cout << " test";
+    std::cout << "Game ended via " << win_conditions.win_type << " in favor of " << win_conditions.winner << endl;
 }
 
 int main()
@@ -875,5 +885,12 @@ int main()
     // test_find_horizontal_road();
     // test_find_road_blocked();
     // test_find_moves();
-    test_play_random_game();
+    for (int i = 0; i < 1000; i++)
+    {
+        auto start = chrono::high_resolution_clock::now();
+        test_play_random_game();
+        auto stop = chrono::high_resolution_clock::now();
+        auto duration = chrono::duration_cast<chrono::milliseconds>(stop - start);
+        cout << duration.count() << endl;
+    }
 }
