@@ -42,3 +42,5 @@ info.
 // {
 //     WinConditions win_conditions = board.take_action(action);
 // }
+
+// NEXT: https://pytorch.org/tutorials/advanced/cpp_frontend.html

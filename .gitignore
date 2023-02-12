@@ -1,2 +1,6 @@
 .vscode/
 *.exe
+libtorch/*
+example-app.cpp
+CMakeLists.txt
+build/*
