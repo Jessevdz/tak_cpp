@@ -157,6 +157,21 @@ vector<string> _rank{"1", "2", "3", "4", "5"};
 vector<string> _stone_type{"C", "F", "S"};
 vector<string> _nr_of_stones{"1", "2", "3", "4", "5"};
 vector<string> _directions{"+", "-", "<", ">"};
+// Mapping between stone types and vector representations of those stone types.
+// The stones are always represented from the perspective of the active player.
+// {0, 0, 0} == empty
+map<char, vector<int>> player_stone_type_to_vec{
+    {'E', {0, 0, 0}},
+    {'F', {0, 0, 1}},
+    {'S', {0, 1, 0}},
+    {'C', {0, 0, 1}},
+};
+map<char, vector<int>> opponent_stone_type_to_vec{
+    {'E', {0, 0, 0}},
+    {'F', {1, 1, 0}},
+    {'S', {1, 0, 1}},
+    {'C', {1, 1, 0}},
+};
 
 /*************************************
 Player char identifier to full string

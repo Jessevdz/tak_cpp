@@ -1,6 +1,7 @@
 #ifndef BOARD_H
 #define BOARD_H
 
+#include <stdexcept>
 #include <vector>
 #include <stack>
 #include <map>
@@ -43,12 +44,14 @@ public:
     const Stone &peek_top_stone();
     char get_top_stone_type();
     int get_size() { return stones.size(); };
+    vector<int> get_square_state(const char);
 };
 
 struct WinConditions
 {
     bool game_ends;
     char winner;
+    int reward;
     string win_type;
 };
 
@@ -117,7 +120,9 @@ public:
     void execute_ptn_move(const string &); // move to private eventually.
     bool player_has_road(const char &);    // move to private eventually.
     vector<string> valid_moves();          // move to private eventually.
+    vector<int> get_board_state();
     WinConditions do_move(const string &);
+    WinConditions take_action(const int);
 };
 
 #endif // BOARD_H

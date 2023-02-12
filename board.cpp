@@ -113,6 +113,40 @@ char Square::get_top_stone_type()
     return stones.top().type;
 }
 
+/********************************************************
+Transform the square to a vector representation.
+Only the top-10 stones are considered in the representation.
+********************************************************/
+vector<int> Square::get_square_state(const char active_player)
+{
+    stack<Stone> s = stones;
+    vector<int> square_state;
+    for (int i = 0; i < 10; i++)
+    {
+        if (s.empty())
+        {
+            vector<int> empty_space = {0, 0, 0};
+            square_state.insert(square_state.end(), empty_space.begin(), empty_space.end());
+        }
+        else
+        {
+            Stone stone = s.top();
+            vector<int> stone_vec;
+            if (stone.color == active_player)
+            {
+                stone_vec = player_stone_type_to_vec[stone.type];
+            }
+            else
+            {
+                stone_vec = opponent_stone_type_to_vec[stone.type];
+            }
+            square_state.insert(square_state.end(), stone_vec.begin(), stone_vec.end());
+            s.pop();
+        }
+    }
+    return square_state;
+}
+
 /**************
 BOARD FUNCTIONS
 **************/
@@ -744,10 +778,9 @@ void Board::execute_ptn_move(const string &ptn_move)
     }
 };
 
-/********************************************************
-Check if the game has ended, and return information on
-the winning player.
-********************************************************/
+/************************************************************************
+Check if the game has ended, and return information on the winning player.
+************************************************************************/
 WinConditions Board::check_win_conditions()
 {
     WinConditions win_conditions;
@@ -759,21 +792,30 @@ WinConditions Board::check_win_conditions()
     if (white_reserve_empty | black_reserve_empty | board_full)
     {
         char winner = check_flat_win();
-        win_conditions = {true, winner, "flat win"};
+        int reward;
+        if (winner == 'T')
+        {
+            reward = 0;
+        }
+        else
+        {
+            reward = 1;
+        }
+        win_conditions = {true, winner, reward, "Flat win"};
         return win_conditions;
     }
     // Both players could have roads
     else if (player_has_road('W'))
     {
-        win_conditions = {true, 'W', "road"};
+        win_conditions = {true, 'W', 1, "Road"};
     }
     else if (player_has_road('B'))
     {
-        win_conditions = {true, 'B', "road"};
+        win_conditions = {true, 'B', 1, "Road"};
     }
     else
     {
-        win_conditions = {false, 'T', ""};
+        win_conditions = {false, 'T', 0, "Not done."};
     }
     return win_conditions;
 }
@@ -791,3 +833,29 @@ WinConditions Board::do_move(const string &ptn_move)
     switch_active_player();
     return win_conditions;
 };
+
+/**************************************************************
+Execute a move on the board as indicated by its' action integer
+**************************************************************/
+WinConditions Board::take_action(const int action)
+{
+    const string ptn_move = int_to_ptn_move[action];
+    return do_move(ptn_move);
+}
+
+/****************************************************************
+Represent the board state as an int vector for the active player.
+****************************************************************/
+vector<int> Board::get_board_state()
+{
+    vector<int> board_state;
+    for (int file = 0; file < 5; file++)
+    {
+        for (int rank = 0; rank < 5; rank++)
+        {
+            vector<int> square_state = squares[file][rank].get_square_state(active_player);
+            board_state.insert(board_state.end(), square_state.begin(), square_state.end()); // Concatenate
+        }
+    }
+    return board_state;
+}

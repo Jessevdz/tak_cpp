@@ -132,6 +132,7 @@ void test_play_random_game()
         string ptn_move;
         ptn_move = valid_moves[random_index];
         win_conditions = board.do_move(ptn_move);
+        vector<int> board_state = board.get_board_state();
     }
     std::cout << "Game ended via " << win_conditions.win_type << " in favor of " << win_conditions.winner << endl;
 }
