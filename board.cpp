@@ -127,6 +127,25 @@ Board::Board()
 }
 
 /********************************************************
+Check if it is the active player's first move
+********************************************************/
+bool Board::player_first_move()
+{
+    if (active_player == 'W')
+    {
+        return white_capstone + white_stone_reserve == 22;
+    }
+    else if (active_player == 'B')
+    {
+        return black_capstone + black_stone_reserve == 22;
+    }
+    else
+    {
+        throw runtime_error("Active player has been defined incorrectly.");
+    }
+};
+
+/********************************************************
 Check if active player has a capstone in their reserve.
 ********************************************************/
 bool Board::player_has_capstone()
@@ -604,8 +623,9 @@ vector<string> Board::valid_moves()
     }
     return valid_ptn_moves;
 }
+
 /********************************************************
-TODO Remove eventually.
+USED FOR TESTING
 Place a stone on top of the stack of stones
 at the square located at [file, rank]
 ********************************************************/
@@ -631,7 +651,27 @@ void Board::execute_ptn_move(const string &ptn_move)
         {
             throw runtime_error("Cannot place a new stone on a square that is not empty.");
         }
-        Stone stone = take_stone_from_reserve(stone_type);
+        Stone stone{'0', '0'};
+        // If this is the first move of the game, the active player places a stone from the other player's reserve.
+        if (white_first_move)
+        {
+            switch_active_player();
+            stone = take_stone_from_reserve(stone_type);
+            switch_active_player();
+            white_first_move = false;
+        }
+        else if (black_first_move)
+        {
+            switch_active_player();
+            stone = take_stone_from_reserve(stone_type);
+            switch_active_player();
+            black_first_move = false;
+        }
+        else
+        {
+            // Default placement
+            stone = take_stone_from_reserve(stone_type);
+        }
         squares[file_index][rank_index].add_stone(stone);
     }
     else if (ptn_move.size() == 8)

@@ -144,7 +144,8 @@ int main()
     // test_find_horizontal_road();
     // test_find_road_blocked();
     // test_find_moves();
-    for (int i = 0; i < 10; i++)
+
+    for (int i = 0; i < 100; i++)
     {
         auto start = chrono::high_resolution_clock::now();
         test_play_random_game();

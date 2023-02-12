@@ -55,6 +55,7 @@ struct WinConditions
 class Board
 {
 private:
+    // GAME STATE VARIABLES
     bool game_has_ended = false;
     char active_player = 'W';
     // Stone counts for players
@@ -62,6 +63,17 @@ private:
     int black_stone_reserve = 21;
     int black_capstone = 1;
     int white_capstone = 1;
+    bool white_first_move = true;
+    bool black_first_move = true;
+    // 2D vector containing all squares composing the board.
+    // Index file-first.
+    vector<vector<Square>> squares{
+        {Square(), Square(), Square(), Square(), Square()},
+        {Square(), Square(), Square(), Square(), Square()},
+        {Square(), Square(), Square(), Square(), Square()},
+        {Square(), Square(), Square(), Square(), Square()},
+        {Square(), Square(), Square(), Square(), Square()},
+    };
     map<int, string> int_to_ptn_move;
     map<string, int> ptn_move_to_int;
     map<char, int> rank_to_index = {
@@ -78,15 +90,7 @@ private:
         {'D', 3},
         {'E', 4},
     };
-    // 2D vector containing all squares composing the board.
-    // Index file-first.
-    vector<vector<Square>> squares{
-        {Square(), Square(), Square(), Square(), Square()},
-        {Square(), Square(), Square(), Square(), Square()},
-        {Square(), Square(), Square(), Square(), Square()},
-        {Square(), Square(), Square(), Square(), Square()},
-        {Square(), Square(), Square(), Square(), Square()},
-    };
+    bool player_first_move();
     bool player_has_capstone();
     bool player_has_stones();
     bool board_is_full();
@@ -109,11 +113,10 @@ private:
 
 public:
     Board();
-    void place_stone(const int &, const int &, const Stone); // Remove eventually.
-    void execute_ptn_move(const string &);                   // move to private eventually.
-    bool player_has_road(const char &);                      // move to private eventually.
-    vector<string> valid_moves();                            // move to private eventually.
-    vector<int> get_legal_moves_for_player(char);
+    void place_stone(const int &, const int &, const Stone);
+    void execute_ptn_move(const string &); // move to private eventually.
+    bool player_has_road(const char &);    // move to private eventually.
+    vector<string> valid_moves();          // move to private eventually.
     WinConditions do_move(const string &);
 };
 
