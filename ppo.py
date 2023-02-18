@@ -37,24 +37,6 @@ def discount_cumsum(x, discount):
 
 
 class Actor(nn.Module):
-    def _distribution(self, obs):
-        raise NotImplementedError
-
-    def _log_prob_from_distribution(self, pi, act):
-        raise NotImplementedError
-
-    def forward(self, obs, act=None):
-        # Produce action distributions for given observations, and
-        # optionally compute the log likelihood of given actions under
-        # those distributions.
-        pi = self._distribution(obs)
-        logp_a = None
-        if act is not None:
-            logp_a = self._log_prob_from_distribution(pi, act)
-        return pi, logp_a
-
-
-class MLPCategoricalActor(Actor):
     def __init__(self, observation_dim: int, action_dim: int):
         super().__init__()
         self.policy_net = nn.Sequential(
@@ -72,15 +54,26 @@ class MLPCategoricalActor(Actor):
     def _distribution(self, obs, valid_action_mask):
         logits = self.policy_net(obs)
         masked_logits = torch.where(
-            valid_action_mask > 0, logits, torch.tensor([-float("inf")])
+            valid_action_mask > 0, logits, torch.tensor([-100000000.0])
         )
-        return Categorical(logits=masked_logits)
+        return masked_logits
+        # return Categorical(logits=masked_logits)
 
     def _log_prob_from_distribution(self, pi, act):
         return pi.log_prob(act)
 
+    def forward(self, obs, valid_action_mask, act=None):
+        # Produce action distributions for given observations, and
+        # optionally compute the log likelihood of given actions under
+        # those distributions.
+        pi = self._distribution(obs, valid_action_mask)
+        logp_a = None
+        if act is not None:
+            logp_a = self._log_prob_from_distribution(pi, act)
+        return pi, logp_a
 
-class MLPCritic(nn.Module):
+
+class Critic(nn.Module):
     def __init__(self, obs_dim):
         super().__init__()
         self.v_net = nn.Sequential(
@@ -97,13 +90,13 @@ class MLPCritic(nn.Module):
         )  # Critical to ensure v has right shape.
 
 
-class MLPActorCritic(nn.Module):
+class ActorCritic(nn.Module):
     def __init__(self, observation_dim: int, action_dim: int):
         super().__init__()
         # Policy
-        self.pi = MLPCategoricalActor(observation_dim, action_dim)
+        self.pi = Actor(observation_dim, action_dim)
         # Value function
-        self.v = MLPCritic(observation_dim)
+        self.v = Critic(observation_dim)
 
     def step(self, obs, valid_action_mask):
         with torch.no_grad():
@@ -115,6 +108,12 @@ class MLPActorCritic(nn.Module):
 
     def act(self, obs):
         return self.step(obs)[0]
+
+    def save_actor(self):
+        torch.save(self.pi, "C:\\Users\\Jesse\\Projects\\tak_cpp\\data\\actor.pt")
+
+    def save_critic(self):
+        torch.save(self.v, "C:\\Users\\Jesse\\Projects\\tak_cpp\\data\\critic.pt")
 
 
 class PPOBuffer:
@@ -199,7 +198,7 @@ class PPOBuffer:
 
 def ppo(
     env_fn,
-    actor_critic=MLPActorCritic,
+    actor_critic=ActorCritic,
     ac_kwargs=dict(),
     seed=0,
     steps_per_epoch=4000,

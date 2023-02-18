@@ -1,8 +1,10 @@
 .vscode/
 *.exe
-libtorch/*
+libtorch_release/*
+libtorch_debug/*
 example-app.cpp
 CMakeLists.txt
 build/*
 .venv/
 __pycache__/*
+data/*

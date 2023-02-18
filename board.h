@@ -116,7 +116,6 @@ private:
 
 public:
     Board();
-    void reset();
     void place_stone(const int &, const int &, const Stone);
     void execute_ptn_move(const string &); // move to private eventually.
     bool player_has_road(const char &);    // move to private eventually.
