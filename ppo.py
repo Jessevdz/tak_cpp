@@ -2,10 +2,10 @@ import numpy as np
 import scipy.signal
 import torch
 import torch.nn as nn
-from torch.distributions.normal import Normal
 from torch.distributions.categorical import Categorical
 from torch.optim import Adam
 import time
+import torch.nn.functional as F
 
 
 def combined_shape(length, shape=None):
@@ -56,8 +56,7 @@ class Actor(nn.Module):
         masked_logits = torch.where(
             valid_action_mask > 0, logits, torch.tensor([-100000000.0])
         )
-        return masked_logits
-        # return Categorical(logits=masked_logits)
+        return Categorical(logits=masked_logits)
 
     def _log_prob_from_distribution(self, pi, act):
         return pi.log_prob(act)
@@ -74,10 +73,10 @@ class Actor(nn.Module):
 
 
 class Critic(nn.Module):
-    def __init__(self, obs_dim):
+    def __init__(self):
         super().__init__()
         self.v_net = nn.Sequential(
-            nn.Linear(obs_dim, 450),
+            nn.Linear(750, 450),
             nn.ReLU(),
             nn.Linear(450, 250),
             nn.ReLU(),
@@ -96,7 +95,7 @@ class ActorCritic(nn.Module):
         # Policy
         self.pi = Actor(observation_dim, action_dim)
         # Value function
-        self.v = Critic(observation_dim)
+        self.v = Critic()
 
     def step(self, obs, valid_action_mask):
         with torch.no_grad():
@@ -109,11 +108,64 @@ class ActorCritic(nn.Module):
     def act(self, obs):
         return self.step(obs)[0]
 
-    def save_actor(self):
-        torch.save(self.pi, "C:\\Users\\Jesse\\Projects\\tak_cpp\\data\\actor.pt")
 
-    def save_critic(self):
-        torch.save(self.v, "C:\\Users\\Jesse\\Projects\\tak_cpp\\data\\critic.pt")
+class ActorTS(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.policy_net = nn.Sequential(
+            nn.Linear(750, 850),
+            nn.ReLU(),
+            nn.Linear(850, 950),
+            nn.ReLU(),
+            nn.Linear(950, 1050),
+            nn.ReLU(),
+            nn.Linear(1050, 1150),
+            nn.ReLU(),
+            nn.Linear(1150, 1275),
+        )
+
+    def sample_action(self, logits):
+        # Logits to probabilities
+        probs = F.softmax(logits, dim=-1)
+        action = torch.multinomial(probs, 1, True)
+        return action
+
+    def get_action_log_prob(self, logits, act):
+        act = act.long().unsqueeze(-1)
+        act, log_pmf = torch.broadcast_tensors(act, logits)
+        act = act[..., :1]
+        return log_pmf.gather(-1, act).squeeze(-1)
+
+    def forward(self, obs, valid_actions):
+        """
+        Produce action distributions for given observations
+        """
+        logits = self.policy_net(obs)
+        masked_logits = torch.where(valid_actions > 0, logits, torch.tensor([-1e8]))
+        masked_logits = masked_logits - masked_logits.logsumexp(dim=-1, keepdim=True)
+        action = self.sample_action(masked_logits)
+        logp_a = self.get_action_log_prob(masked_logits, action)
+        return action, logp_a[0]
+
+
+class ActorCriticTS(nn.Module):
+    """
+    AC implementation that can be serialized by torchscript, and thus
+    moved to the C++ code.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.pi = ActorTS()  # Policy
+        self.v = Critic()  # Value function
+
+    def forward(self, inputs):
+        obs = inputs[:750]
+        valid_action_mask = inputs[750:]
+        with torch.no_grad():
+            action, logp_a = self.pi.forward(obs, valid_action_mask)
+            v = self.v(obs)
+        return action, v, logp_a
 
 
 class PPOBuffer:
