@@ -1,4 +1,5 @@
 #include "board.h"
+#include <torch/torch.h>
 
 struct GameState
 {
@@ -17,9 +18,8 @@ are controlled by policies, and a board.
 class TakEnv
 {
 private:
-    Board board = Board();
-
 public:
+    Board board = Board();
     void reset();
     GameState step(int);
 };
@@ -30,7 +30,7 @@ initial observation.
 ****************************************/
 void TakEnv::reset()
 {
-    board = Board();
+    board.reset();
 }
 
 /****************************************
@@ -44,3 +44,10 @@ info.
 // }
 
 // NEXT: https://pytorch.org/tutorials/advanced/cpp_frontend.html
+
+int main()
+{
+    torch::Tensor tensor = torch::rand({2, 3});
+    std::cout << tensor << std::endl;
+    return 0;
+}

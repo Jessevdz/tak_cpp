@@ -859,3 +859,20 @@ vector<int> Board::get_board_state()
     }
     return board_state;
 }
+
+/****************************************************************
+Represent the board state as an int vector for the active player.
+****************************************************************/
+void Board::reset()
+{
+    // GAME STATE VARIABLES
+    game_has_ended = false;
+    active_player = 'W';
+    // Stone counts for players
+    white_stone_reserve = 21;
+    black_stone_reserve = 21;
+    black_capstone = 1;
+    white_capstone = 1;
+    white_first_move = true;
+    black_first_move = true;
+}
