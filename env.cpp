@@ -46,17 +46,23 @@ an observation, reward, and termination info.
 
 int main()
 {
-    torch::NoGradGuard no_grad;
     // Test torchscript
     torch::jit::script::Module module;
     module = torch::jit::load("C:\\Users\\Jesse\\Projects\\tak_cpp\\data\\traced_ac.pt");
+    torch::NoGradGuard no_grad;
+    module.eval();
+
     torch::Tensor random_obs = torch::rand({750});
     torch::Tensor random_mask = torch::where(torch::rand({1275}) > 0.7, 0, 1);
+    torch::Tensor arr[2] = {random_obs, random_mask};
+    torch::Tensor input_tensor = torch::cat(arr);
+
     // Create a vector of inputs.
     std::vector<torch::jit::IValue> inputs;
-    inputs.push_back(random_obs);
-    inputs.push_back(random_mask);
+    inputs.push_back(input_tensor);
+
     // Execute the model and turn its output into a tensor.
+    // It's imperative the output returns a tensor
     at::Tensor output = module.forward(inputs).toTensor();
     std::cout << output << '\n';
     return 0;

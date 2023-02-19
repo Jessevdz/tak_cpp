@@ -84,9 +84,7 @@ class Critic(nn.Module):
         )
 
     def forward(self, obs):
-        return torch.squeeze(
-            self.v_net(obs), -1
-        )  # Critical to ensure v has right shape.
+        return self.v_net(obs)
 
 
 class ActorCritic(nn.Module):
@@ -140,12 +138,14 @@ class ActorTS(nn.Module):
         """
         Produce action distributions for given observations
         """
+        # obs = inputs[:, :750]
+        # valid_actions = inputs[:, 750:]
         logits = self.policy_net(obs)
         masked_logits = torch.where(valid_actions > 0, logits, torch.tensor([-1e8]))
         masked_logits = masked_logits - masked_logits.logsumexp(dim=-1, keepdim=True)
         action = self.sample_action(masked_logits)
         logp_a = self.get_action_log_prob(masked_logits, action)
-        return action, logp_a[0]
+        return action, logp_a
 
 
 class ActorCriticTS(nn.Module):
@@ -162,10 +162,10 @@ class ActorCriticTS(nn.Module):
     def forward(self, inputs):
         obs = inputs[:750]
         valid_action_mask = inputs[750:]
-        with torch.no_grad():
-            action, logp_a = self.pi.forward(obs, valid_action_mask)
-            v = self.v(obs)
-        return action, v, logp_a
+        action, logp_a = self.pi.forward(obs, valid_action_mask)
+        v = self.v(obs)
+        return torch.cat([action, logp_a, v])
+        # return action, v, logp_a
 
 
 class PPOBuffer:
