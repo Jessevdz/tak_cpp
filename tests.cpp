@@ -145,13 +145,6 @@ int main()
     // test_find_horizontal_road();
     // test_find_road_blocked();
     // test_find_moves();
-
-    for (int i = 0; i < 100; i++)
-    {
-        auto start = chrono::high_resolution_clock::now();
-        test_play_random_game();
-        auto stop = chrono::high_resolution_clock::now();
-        auto duration = chrono::duration_cast<chrono::milliseconds>(stop - start);
-        cout << duration.count() << endl;
-    }
+    // test_play_random_game();
+    return 0;
 }

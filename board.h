@@ -122,6 +122,7 @@ public:
     vector<string> valid_moves();          // move to private eventually.
     vector<int> get_board_state();
     vector<int> get_valid_moves_mask();
+    const char get_active_player() { return active_player; };
     WinConditions do_move(const string &);
     WinConditions take_action(const int);
     void reset_board();

@@ -462,8 +462,8 @@ vector<string> Board::valid_moves()
 
     // Check which stones the player can still play
     vector<string> valid_stone_types;
-    bool player_has_stones;
-    bool player_has_capstone;
+    bool player_has_stones = false;
+    bool player_has_capstone = false;
     if (active_player == 'W')
     {
         if (white_capstone > 0)
@@ -666,11 +666,12 @@ The mask contains 1 if it is a valid action, and 0 if it is not.
 vector<int> Board::get_valid_moves_mask()
 {
     vector<string> valid_ptn_moves = valid_moves();
-    vector<int> valid_moves_mask;
+    vector<int> valid_moves_mask(1275, 0);
     for (string ptn_move : valid_ptn_moves)
     {
-        // Next: find the fastest way of creating this mask.
+        valid_moves_mask.at(ptn_move_to_int[ptn_move]) = 1;
     }
+    return valid_moves_mask;
 }
 /********************************************************
 USED FOR TESTING
