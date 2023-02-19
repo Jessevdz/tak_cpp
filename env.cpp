@@ -22,17 +22,44 @@ class TakEnv
 {
 private:
 public:
-    Board board = Board();
+    TakEnv();
+    torch::jit::script::Module player;
+    Board board;
     void reset();
-    GameState step(int);
+    void step();
 };
 
 /******************************************************
-Reset the board state, return the initial observation.
+Initialize players with trained model.
+Reset the board, and return the initial observation.
+*******************************************************/
+TakEnv::TakEnv()
+{
+    player = torch::jit::load("C:\\Users\\Jesse\\Projects\\tak_cpp\\data\\traced_ac.pt");
+    player.eval();
+    reset();
+}
+
+/******************************************************
+Reset the board state
 *******************************************************/
 void TakEnv::reset()
 {
-    board = Board();
+    board.reset_board();
+}
+
+/******************************************************
+Take an observation from the board.
+Have the player module pick an action.
+Perform the action on the board.
+Save all necessary state.
+*******************************************************/
+void TakEnv::step()
+{
+    vector<int> obs = board.get_board_state();
+    torch::Tensor obs_tensor = torch::from_blob(obs.data(), obs.size(), torch::TensorOptions().device(torch::kCPU));
+    std::cout << obs_tensor << std::endl;
+    // at::Tensor ac_output = player.forward(inputs).toTensor();
 }
 
 /******************************************************
@@ -44,7 +71,7 @@ an observation, reward, and termination info.
 //     WinConditions win_conditions = board.take_action(action);
 // }
 
-int main()
+int load_and_run_ts_module()
 {
     // Test torchscript
     torch::jit::script::Module module;
@@ -66,4 +93,10 @@ int main()
     at::Tensor output = module.forward(inputs).toTensor();
     std::cout << output << '\n';
     return 0;
+}
+
+int main()
+{
+    TakEnv env = TakEnv();
+    env.step();
 }

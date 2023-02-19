@@ -1,3 +1,7 @@
+"""
+PPO implementation from Gym: https://github.com/openai/spinningup/tree/master/spinup/algos/pytorch/ppo
+"""
+
 import numpy as np
 import scipy.signal
 import torch
@@ -138,8 +142,6 @@ class ActorTS(nn.Module):
         """
         Produce action distributions for given observations
         """
-        # obs = inputs[:, :750]
-        # valid_actions = inputs[:, 750:]
         logits = self.policy_net(obs)
         masked_logits = torch.where(valid_actions > 0, logits, torch.tensor([-1e8]))
         masked_logits = masked_logits - masked_logits.logsumexp(dim=-1, keepdim=True)
@@ -165,7 +167,6 @@ class ActorCriticTS(nn.Module):
         action, logp_a = self.pi.forward(obs, valid_action_mask)
         v = self.v(obs)
         return torch.cat([action, logp_a, v])
-        # return action, v, logp_a
 
 
 class PPOBuffer:
@@ -474,7 +475,6 @@ def ppo(
     for epoch in range(epochs):
         for t in range(local_steps_per_epoch):
             a, v, logp = ac.step(torch.as_tensor(o, dtype=torch.float32))
-
             next_o, r, d, _ = env.step(a)
             ep_ret += r
             ep_len += 1

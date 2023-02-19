@@ -420,7 +420,7 @@ Stone Board::take_stone_from_reserve(const char &stone_type)
 };
 
 /*************************************************************
-Return a mask indicating valid PTN moves for the active player.
+Return all valid PTN move strings for the active player.
 *************************************************************/
 vector<string> Board::valid_moves()
 {
@@ -658,6 +658,20 @@ vector<string> Board::valid_moves()
     return valid_ptn_moves;
 }
 
+/*************************************************************
+Return a mask indicating valid moves for the active player.
+The mask is over all possible PTN moves.
+The mask contains 1 if it is a valid action, and 0 if it is not.
+*************************************************************/
+vector<int> Board::get_valid_moves_mask()
+{
+    vector<string> valid_ptn_moves = valid_moves();
+    vector<int> valid_moves_mask;
+    for (string ptn_move : valid_ptn_moves)
+    {
+        // Next: find the fastest way of creating this mask.
+    }
+}
 /********************************************************
 USED FOR TESTING
 Place a stone on top of the stack of stones
@@ -858,4 +872,26 @@ vector<int> Board::get_board_state()
         }
     }
     return board_state;
+}
+
+/****************************************************************
+Reset the board state
+****************************************************************/
+void Board::reset_board()
+{
+    game_has_ended = false;
+    active_player = 'W';
+    white_stone_reserve = 21;
+    black_stone_reserve = 21;
+    black_capstone = 1;
+    white_capstone = 1;
+    white_first_move = true;
+    black_first_move = true;
+    vector<vector<Square>> squares{
+        {Square(), Square(), Square(), Square(), Square()},
+        {Square(), Square(), Square(), Square(), Square()},
+        {Square(), Square(), Square(), Square(), Square()},
+        {Square(), Square(), Square(), Square(), Square()},
+        {Square(), Square(), Square(), Square(), Square()},
+    };
 }

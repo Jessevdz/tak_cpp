@@ -121,8 +121,10 @@ public:
     bool player_has_road(const char &);    // move to private eventually.
     vector<string> valid_moves();          // move to private eventually.
     vector<int> get_board_state();
+    vector<int> get_valid_moves_mask();
     WinConditions do_move(const string &);
     WinConditions take_action(const int);
+    void reset_board();
 };
 
 #endif // BOARD_H
