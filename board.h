@@ -59,7 +59,6 @@ class Board
 {
 private:
     // GAME STATE VARIABLES
-    bool game_has_ended = false;
     char active_player = 'W';
     // Stone counts for players
     int white_stone_reserve = 21;

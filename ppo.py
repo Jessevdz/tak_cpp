@@ -121,9 +121,9 @@ class ActorTS(nn.Module):
             nn.ReLU(),
             nn.Linear(950, 1050),
             nn.ReLU(),
-            nn.Linear(1050, 1150),
+            nn.Linear(1050, 1250),
             nn.ReLU(),
-            nn.Linear(1150, 1275),
+            nn.Linear(1250, 1575),
         )
 
     def sample_action(self, logits):

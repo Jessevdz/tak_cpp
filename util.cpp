@@ -227,7 +227,7 @@ map<int, string> enumerate_all_ptn_moves()
                         if (dr == ">")
                         {
                             int file_index = _file_to_index[f];
-                            if ((file_index + n_squares) >= 5)
+                            if ((file_index + n_squares) > 5)
                                 continue;
                         }
                         if (dr == "<")
@@ -239,7 +239,7 @@ map<int, string> enumerate_all_ptn_moves()
                         if (dr == "+")
                         {
                             int rank_index = _rank_to_index[r];
-                            if ((rank_index + n_squares) >= 5)
+                            if ((rank_index + n_squares) > 5)
                                 continue;
                         }
                         if (dr == "-")

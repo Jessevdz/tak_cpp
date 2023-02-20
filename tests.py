@@ -30,9 +30,8 @@ def compare_AC_outputs():
 
 def test_convert_to_torchscript():
     ac = ActorCriticTS()
-    # _ = ac.forward(torch.rand((2025)))
     sm = torch.jit.script(ac)
-    print(sm.forward(torch.rand((2025))))
+    print(sm.forward(torch.rand((2325))))
     sm.save("C:\\Users\\Jesse\\Projects\\tak_cpp\\data\\traced_ac.pt")
 
 

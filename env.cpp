@@ -3,6 +3,7 @@
 #include <iostream>
 #include <torch/script.h>
 #include <memory>
+#include <chrono>
 
 struct Experience
 {
@@ -135,45 +136,21 @@ bool TakEnv::step()
     return game_ends;
 }
 
-/******************************************************
-Take an action on the board, and return
-an observation, reward, and termination info.
-******************************************************/
-// GameState TakEnv::step(int action)
-// {
-//     WinConditions win_conditions = board.take_action(action);
-// }
-
-int load_and_run_ts_module()
-{
-    // Test torchscript
-    torch::jit::script::Module module;
-    module = torch::jit::load("C:\\Users\\Jesse\\Projects\\tak_cpp\\data\\traced_ac.pt");
-    torch::NoGradGuard no_grad;
-    module.eval();
-
-    torch::Tensor random_obs = torch::rand({750});
-    torch::Tensor random_mask = torch::where(torch::rand({1275}) > 0.7, 0, 1);
-    torch::Tensor arr[2] = {random_obs, random_mask};
-    torch::Tensor input_tensor = torch::cat(arr);
-
-    // Create a vector of inputs.
-    std::vector<torch::jit::IValue> inputs;
-    inputs.push_back(input_tensor);
-
-    // Execute the model and turn its output into a tensor.
-    // It's imperative the output returns a tensor
-    at::Tensor output = module.forward(inputs).toTensor();
-    std::cout << output << '\n';
-    return 0;
-}
-
 int main()
 {
     TakEnv env = TakEnv();
-    bool game_ends = false;
-    while (!game_ends)
+    auto start = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < 1000; i++)
     {
-        game_ends = env.step();
+        bool game_ends = false;
+        while (!game_ends)
+        {
+            game_ends = env.step();
+        }
+        env.reset();
     }
+    auto stop = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::seconds>(stop - start);
+    std::cout << "Time taken by function: " << duration.count() << std::endl;
+    std::system("pause");
 }

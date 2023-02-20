@@ -478,7 +478,11 @@ vector<string> Board::valid_moves()
         if (black_stone_reserve > 0)
             player_has_stones = true;
     }
-    if (player_has_capstone && player_has_stones)
+    if ((active_player == 'W' && white_first_move) | (active_player == 'B' && black_first_move))
+    {
+        valid_stone_types = {"F"};
+    }
+    else if (player_has_capstone && player_has_stones)
     {
         valid_stone_types = {"C", "S", "F"};
     }
@@ -666,10 +670,11 @@ The mask contains 1 if it is a valid action, and 0 if it is not.
 vector<int> Board::get_valid_moves_mask()
 {
     vector<string> valid_ptn_moves = valid_moves();
-    vector<int> valid_moves_mask(1275, 0);
-    for (string ptn_move : valid_ptn_moves)
+    vector<int> valid_moves_mask(1575, 0);
+    for (const string ptn_move : valid_ptn_moves)
     {
-        valid_moves_mask.at(ptn_move_to_int[ptn_move]) = 1;
+        const int pnt_move_idx = ptn_move_to_int.at(ptn_move);
+        valid_moves_mask.at(pnt_move_idx) = 1;
     }
     return valid_moves_mask;
 }
@@ -702,14 +707,14 @@ void Board::execute_ptn_move(const string &ptn_move)
         }
         Stone stone{'0', '0'};
         // If this is the first move of the game, the active player places a stone from the other player's reserve.
-        if (white_first_move)
+        if (white_first_move && active_player == 'W')
         {
             switch_active_player();
             stone = take_stone_from_reserve(stone_type);
             switch_active_player();
             white_first_move = false;
         }
-        else if (black_first_move)
+        else if (black_first_move && active_player == 'B')
         {
             switch_active_player();
             stone = take_stone_from_reserve(stone_type);
@@ -748,7 +753,7 @@ void Board::execute_ptn_move(const string &ptn_move)
         }
 
         auto it = drop_counts.cbegin(); // iterate over drop count string
-        for (int i = 0; i <= 4; ++i)    // There are max 4 drop counts
+        for (int i = 0; i < 4; ++i)     // There are max 4 drop counts
         {
             if (*it == '0') // End of drop count string
                 break;
@@ -854,7 +859,7 @@ Execute a move on the board as indicated by its' action integer
 **************************************************************/
 WinConditions Board::take_action(const int action)
 {
-    const string ptn_move = int_to_ptn_move[action];
+    const string ptn_move = int_to_ptn_move.at(action);
     return do_move(ptn_move);
 }
 
@@ -880,7 +885,6 @@ Reset the board state
 ****************************************************************/
 void Board::reset_board()
 {
-    game_has_ended = false;
     active_player = 'W';
     white_stone_reserve = 21;
     black_stone_reserve = 21;
@@ -888,7 +892,7 @@ void Board::reset_board()
     white_capstone = 1;
     white_first_move = true;
     black_first_move = true;
-    vector<vector<Square>> squares{
+    squares = {
         {Square(), Square(), Square(), Square(), Square()},
         {Square(), Square(), Square(), Square(), Square()},
         {Square(), Square(), Square(), Square(), Square()},
