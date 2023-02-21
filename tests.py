@@ -1,5 +1,6 @@
 from ppo import *
 import torch
+import pandas as pd
 
 
 def compare_AC_outputs():
@@ -35,6 +36,13 @@ def test_convert_to_torchscript():
     sm.save("C:\\Users\\Jesse\\Projects\\tak_cpp\\data\\traced_ac.pt")
 
 
+def read_exp_csv():
+    df = pd.read_csv("data/experience.csv", usecols=[1])
+    vc = df.value_counts()
+    pass
+
+
 if __name__ == "__main__":
     # compare_AC_outputs()
-    test_convert_to_torchscript()
+    # test_convert_to_torchscript()
+    read_exp_csv()
