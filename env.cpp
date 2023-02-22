@@ -47,7 +47,7 @@ class TakEnv
 private:
     ExperienceBuffer white_player_experience;
     ExperienceBuffer black_player_experience;
-    void write_player_experience(string, std::ofstream &, ExperienceBuffer &);
+    void write_player_experience(string, ExperienceBuffer &);
 
 public:
     TakEnv();
@@ -55,7 +55,7 @@ public:
     Board board;
     void reset();
     bool step();
-    void write_experience_to_disk();
+    void write_experience_to_cout();
 };
 
 /******************************************************
@@ -149,7 +149,7 @@ bool TakEnv::step()
 /******************************************************
 Write a single player's experience to disk.
 *******************************************************/
-void TakEnv::write_player_experience(string ss, std::ofstream &ofs, ExperienceBuffer &player_exp)
+void TakEnv::write_player_experience(string ss, ExperienceBuffer &player_exp)
 {
     char delimiter = ',';
     for (int i = 0; i < player_exp.experience_len; i++)
@@ -168,12 +168,10 @@ void TakEnv::write_player_experience(string ss, std::ofstream &ofs, ExperienceBu
         ss += std::to_string(is_done) += delimiter;
         for (int i : obs)
         {
-            // buffer_pos = sprintf(buff + buffer_pos, "%d,", i);
             ss += std::to_string(i) += delimiter;
         }
-        // sprintf((buff + buffer_pos), "\n", i);
-        ss += "\n";
-        ofs << ss;
+        // ss += "\n";
+        std::cout << ss;
         ss.clear();
     }
 }
@@ -181,25 +179,20 @@ void TakEnv::write_player_experience(string ss, std::ofstream &ofs, ExperienceBu
 /******************************************************
 Write the combined white and black player experience to disk.
 *******************************************************/
-void TakEnv::write_experience_to_disk()
+void TakEnv::write_experience_to_cout()
 {
-
     string ss;
     ss.reserve(2000);
-    auto start = std::chrono::steady_clock::now();
-    std::ofstream ofs("data/experience.csv", std::ofstream::out);
-    write_player_experience(ss, ofs, white_player_experience);
-    write_player_experience(ss, ofs, black_player_experience);
-    ofs.close();
-    auto end = std::chrono::steady_clock::now();
-    std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << " ms" << endl;
+    write_player_experience(ss, white_player_experience);
+    write_player_experience(ss, black_player_experience);
 }
 
 int main()
 {
+    int games_to_play;
+    cin >> games_to_play;
     TakEnv env = TakEnv();
-    auto start = std::chrono::high_resolution_clock::now();
-    for (int i = 0; i < 1000; i++)
+    for (int i = 0; i < games_to_play; i++)
     {
         bool game_ends = false;
         while (!game_ends)
@@ -208,9 +201,5 @@ int main()
         }
         env.reset();
     }
-    env.write_experience_to_disk();
-    auto stop = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::seconds>(stop - start);
-    std::cout << "Time taken by function: " << duration.count() << std::endl;
-    std::system("pause");
+    env.write_experience_to_cout();
 }
