@@ -2,14 +2,19 @@
 PPO implementation from Gym: https://github.com/openai/spinningup/tree/master/spinup/algos/pytorch/ppo
 """
 
+import os
 import numpy as np
 import scipy.signal
 import torch
 import torch.nn as nn
-from torch.distributions.categorical import Categorical
 from torch.optim import Adam
-import time
 import torch.nn.functional as F
+from itertools import accumulate
+from subprocess import Popen, PIPE
+
+
+SERIALIZED_AC_LOC = "C:\\Users\\Jesse\\Projects\\tak_cpp\\data\\serialized_ac.pt"
+AC_LOC = "C:\\Users\\Jesse\\Projects\\tak_cpp\\data\\ac.pt"
 
 
 def combined_shape(length, shape=None):
@@ -40,42 +45,6 @@ def discount_cumsum(x, discount):
     return scipy.signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
 
 
-class Actor(nn.Module):
-    def __init__(self, observation_dim: int, action_dim: int):
-        super().__init__()
-        self.policy_net = nn.Sequential(
-            nn.Linear(observation_dim, 850),
-            nn.ReLU(),
-            nn.Linear(850, 950),
-            nn.ReLU(),
-            nn.Linear(950, 1050),
-            nn.ReLU(),
-            nn.Linear(1050, 1150),
-            nn.ReLU(),
-            nn.Linear(1150, action_dim),
-        )
-
-    def _distribution(self, obs, valid_action_mask):
-        logits = self.policy_net(obs)
-        masked_logits = torch.where(
-            valid_action_mask > 0, logits, torch.tensor([-100000000.0])
-        )
-        return Categorical(logits=masked_logits)
-
-    def _log_prob_from_distribution(self, pi, act):
-        return pi.log_prob(act)
-
-    def forward(self, obs, valid_action_mask, act=None):
-        # Produce action distributions for given observations, and
-        # optionally compute the log likelihood of given actions under
-        # those distributions.
-        pi = self._distribution(obs, valid_action_mask)
-        logp_a = None
-        if act is not None:
-            logp_a = self._log_prob_from_distribution(pi, act)
-        return pi, logp_a
-
-
 class Critic(nn.Module):
     def __init__(self):
         super().__init__()
@@ -91,27 +60,7 @@ class Critic(nn.Module):
         return self.v_net(obs)
 
 
-class ActorCritic(nn.Module):
-    def __init__(self, observation_dim: int, action_dim: int):
-        super().__init__()
-        # Policy
-        self.pi = Actor(observation_dim, action_dim)
-        # Value function
-        self.v = Critic()
-
-    def step(self, obs, valid_action_mask):
-        with torch.no_grad():
-            pi = self.pi._distribution(obs, valid_action_mask)
-            a = pi.sample()
-            logp_a = self.pi._log_prob_from_distribution(pi, a)
-            v = self.v(obs)
-        return a.numpy(), v.numpy(), logp_a.numpy()
-
-    def act(self, obs):
-        return self.step(obs)[0]
-
-
-class ActorTS(nn.Module):
+class Actor(nn.Module):
     def __init__(self):
         super().__init__()
         self.policy_net = nn.Sequential(
@@ -150,7 +99,7 @@ class ActorTS(nn.Module):
         return action, logp_a
 
 
-class ActorCriticTS(nn.Module):
+class ActorCritic(nn.Module):
     """
     AC implementation that can be serialized by torchscript, and thus
     moved to the C++ code.
@@ -158,7 +107,7 @@ class ActorCriticTS(nn.Module):
 
     def __init__(self):
         super().__init__()
-        self.pi = ActorTS()  # Policy
+        self.pi = Actor()  # Policy
         self.v = Critic()  # Value function
 
     def forward(self, inputs):
@@ -176,30 +125,21 @@ class PPOBuffer:
     for calculating the advantages of state-action pairs.
     """
 
-    def __init__(self, obs_dim, act_dim, size, gamma=0.99, lam=0.95):
-        self.obs_buf = np.zeros(combined_shape(size, obs_dim), dtype=np.float32)
-        self.act_buf = np.zeros(combined_shape(size, act_dim), dtype=np.float32)
-        self.adv_buf = np.zeros(size, dtype=np.float32)
-        self.rew_buf = np.zeros(size, dtype=np.float32)
-        self.ret_buf = np.zeros(size, dtype=np.float32)
-        self.val_buf = np.zeros(size, dtype=np.float32)
-        self.logp_buf = np.zeros(size, dtype=np.float32)
+    def __init__(self, obs, act, rew, val, logp, is_done, gamma=0.99, lam=0.95):
         self.gamma, self.lam = gamma, lam
-        self.ptr, self.path_start_idx, self.max_size = 0, 0, size
 
-    def store(self, obs, act, rew, val, logp):
-        """
-        Append one timestep of agent-environment interaction to the buffer.
-        """
-        assert self.ptr < self.max_size  # buffer has to have room so you can store
-        self.obs_buf[self.ptr] = obs
-        self.act_buf[self.ptr] = act
-        self.rew_buf[self.ptr] = rew
-        self.val_buf[self.ptr] = val
-        self.logp_buf[self.ptr] = logp
-        self.ptr += 1
+        self.obs_buf = np.array(obs, dtype=np.float32)
+        self.act_buf = np.array(act, dtype=np.float32)
+        # self.act_buf = np.zeros(combined_shape(size, act_dim), dtype=np.float32)
+        self.rew_buf = np.array(rew, dtype=np.float32)
+        self.val_buf = np.array(val, dtype=np.float32)
+        self.logp_buf = np.array(logp, dtype=np.float32)
+        self.is_done = np.array(is_done, dtype=np.float32)
 
-    def finish_path(self, last_val=0):
+        self.adv_buf = np.zeros(len(self.obs_buf), dtype=np.float32)
+        self.ret_buf = np.zeros(len(self.obs_buf), dtype=np.float32)
+
+    def finish_path(self):
         """
         Call this at the end of a trajectory, or when one gets cut off
         by an epoch ending. This looks back in the buffer to where the
@@ -215,18 +155,25 @@ class PPOBuffer:
         for timesteps beyond the arbitrary episode horizon (or epoch cutoff).
         """
 
-        path_slice = slice(self.path_start_idx, self.ptr)
-        rews = np.append(self.rew_buf[path_slice], last_val)
-        vals = np.append(self.val_buf[path_slice], last_val)
+        # TODO: fine-grained check of correctness.
 
-        # the next two lines implement GAE-Lambda advantage calculation
-        deltas = rews[:-1] + self.gamma * vals[1:] - vals[:-1]
-        self.adv_buf[path_slice] = discount_cumsum(deltas, self.gamma * self.lam)
+        # Calculate this for every finished trajectory in the experience
+        is_done_idx = np.where(self.is_done > 0)[0] + 1
+        # Start the first trajectory at 0
+        is_done_idx = np.insert(is_done_idx, 0, 0)
+        for i in range(is_done_idx.size - 1):
+            path_slice = slice(is_done_idx[i], is_done_idx[i + 1])
+            rews = np.append(self.rew_buf[path_slice], 0)
+            vals = np.append(self.val_buf[path_slice], 0)
 
-        # the next line computes rewards-to-go, to be targets for the value function
-        self.ret_buf[path_slice] = discount_cumsum(rews, self.gamma)[:-1]
+            # the next two lines implement GAE-Lambda advantage calculation
+            deltas = (rews[:-1] + (self.gamma * vals[1:])) - vals[:-1]
+            advantage = discount_cumsum(deltas, self.gamma * self.lam)
+            self.adv_buf[path_slice] = advantage
 
-        self.path_start_idx = self.ptr
+            # the next line computes rewards-to-go, to be targets for the value function
+            rewards_to_go = discount_cumsum(rews, self.gamma)[:-1]
+            self.ret_buf[path_slice] = rewards_to_go
 
     def get(self):
         """
@@ -234,8 +181,7 @@ class PPOBuffer:
         the buffer, with advantages appropriately normalized (shifted to have
         mean zero and std one). Also, resets some pointers in the buffer.
         """
-        assert self.ptr == self.max_size  # buffer has to be full before you can get
-        self.ptr, self.path_start_idx = 0, 0
+
         # the next two lines implement the advantage normalization trick
         adv_mean, adv_std = mpi_statistics_scalar(self.adv_buf)
         self.adv_buf = (self.adv_buf - adv_mean) / adv_std
@@ -249,432 +195,175 @@ class PPOBuffer:
         return {k: torch.as_tensor(v, dtype=torch.float32) for k, v in data.items()}
 
 
-def ppo(
-    env_fn,
-    actor_critic=ActorCritic,
-    ac_kwargs=dict(),
-    seed=0,
-    steps_per_epoch=4000,
-    epochs=50,
-    gamma=0.99,
-    clip_ratio=0.2,
-    pi_lr=3e-4,
-    vf_lr=1e-3,
-    train_pi_iters=80,
-    train_v_iters=80,
-    lam=0.97,
-    max_ep_len=1000,
-    target_kl=0.01,
-    logger_kwargs=dict(),
-    save_freq=10,
-):
-    """
-    Proximal Policy Optimization (by clipping),
+def compute_loss_pi(data):
+    """Set up function for computing PPO policy loss"""
+    obs, act, adv, logp_old = data["obs"], data["act"], data["adv"], data["logp"]
 
-    with early stopping based on approximate KL
+    # Policy loss
+    pi, logp = ac.pi(obs, act)
+    ratio = torch.exp(logp - logp_old)
+    clip_adv = torch.clamp(ratio, 1 - clip_ratio, 1 + clip_ratio) * adv
+    loss_pi = -(torch.min(ratio * adv, clip_adv)).mean()
 
-    Args:
-        env_fn : A function which creates a copy of the environment.
-            The environment must satisfy the OpenAI Gym API.
+    # Useful extra info
+    approx_kl = (logp_old - logp).mean().item()
+    ent = pi.entropy().mean().item()
+    clipped = ratio.gt(1 + clip_ratio) | ratio.lt(1 - clip_ratio)
+    clipfrac = torch.as_tensor(clipped, dtype=torch.float32).mean().item()
+    pi_info = dict(kl=approx_kl, ent=ent, cf=clipfrac)
 
-        actor_critic: The constructor method for a PyTorch Module with a
-            ``step`` method, an ``act`` method, a ``pi`` module, and a ``v``
-            module. The ``step`` method should accept a batch of observations
-            and return:
-
-            ===========  ================  ======================================
-            Symbol       Shape             Description
-            ===========  ================  ======================================
-            ``a``        (batch, act_dim)  | Numpy array of actions for each
-                                           | observation.
-            ``v``        (batch,)          | Numpy array of value estimates
-                                           | for the provided observations.
-            ``logp_a``   (batch,)          | Numpy array of log probs for the
-                                           | actions in ``a``.
-            ===========  ================  ======================================
-
-            The ``act`` method behaves the same as ``step`` but only returns ``a``.
-
-            The ``pi`` module's forward call should accept a batch of
-            observations and optionally a batch of actions, and return:
-
-            ===========  ================  ======================================
-            Symbol       Shape             Description
-            ===========  ================  ======================================
-            ``pi``       N/A               | Torch Distribution object, containing
-                                           | a batch of distributions describing
-                                           | the policy for the provided observations.
-            ``logp_a``   (batch,)          | Optional (only returned if batch of
-                                           | actions is given). Tensor containing
-                                           | the log probability, according to
-                                           | the policy, of the provided actions.
-                                           | If actions not given, will contain
-                                           | ``None``.
-            ===========  ================  ======================================
-
-            The ``v`` module's forward call should accept a batch of observations
-            and return:
-
-            ===========  ================  ======================================
-            Symbol       Shape             Description
-            ===========  ================  ======================================
-            ``v``        (batch,)          | Tensor containing the value estimates
-                                           | for the provided observations. (Critical:
-                                           | make sure to flatten this!)
-            ===========  ================  ======================================
+    return loss_pi, pi_info
 
 
-        ac_kwargs (dict): Any kwargs appropriate for the ActorCritic object
-            you provided to PPO.
+def compute_loss_v(data):
+    """Set up function for computing value loss"""
+    obs, ret = data["obs"], data["ret"]
+    return ((ac.v(obs) - ret) ** 2).mean()
 
-        seed (int): Seed for random number generators.
 
-        steps_per_epoch (int): Number of steps of interaction (state-action pairs)
-            for the agent and the environment in each epoch.
+def serialize_actor_critic(ac_model):
+    sm = torch.jit.script(ac_model)
+    # print(sm.forward(torch.rand((2325))))
+    sm.save(SERIALIZED_AC_LOC)
 
-        epochs (int): Number of epochs of interaction (equivalent to
-            number of policy updates) to perform.
 
-        gamma (float): Discount factor. (Always between 0 and 1.)
+def save_actor_critic(ac_model):
+    torch.save(ac_model, AC_LOC)
 
-        clip_ratio (float): Hyperparameter for clipping in the policy objective.
-            Roughly: how far can the new policy go from the old policy while
-            still profiting (improving the objective function)? The new policy
-            can still go farther than the clip_ratio says, but it doesn't help
-            on the objective anymore. (Usually small, 0.1 to 0.3.) Typically
-            denoted by :math:`\epsilon`.
 
-        pi_lr (float): Learning rate for policy optimizer.
+def loac_actor_critic():
+    return torch.load(AC_LOC)
 
-        vf_lr (float): Learning rate for value function optimizer.
 
-        train_pi_iters (int): Maximum number of gradient descent steps to take
-            on policy loss per epoch. (Early stopping may cause optimizer
-            to take fewer than this.)
+def get_actor_critic(load_from_disk=False):
+    """Create a new Actor-Critic module or load one from disk."""
+    if load_from_disk:
+        if os.path.exists(AC_LOC):
+            return loac_actor_critic()
+    return ActorCritic()
 
-        train_v_iters (int): Number of gradient descent steps to take on
-            value function per epoch.
 
-        lam (float): Lambda for GAE-Lambda. (Always between 0 and 1,
-            close to 1.)
+def update_ppo(buffer):
+    data = buffer.get()
 
-        max_ep_len (int): Maximum length of trajectory / episode / rollout.
+    pi_l_old, pi_info_old = compute_loss_pi(data)
+    pi_l_old = pi_l_old.item()
+    v_l_old = compute_loss_v(data).item()
 
-        target_kl (float): Roughly what KL divergence we think is appropriate
-            between new and old policies after an update. This will get used
-            for early stopping. (Usually small, 0.01 or 0.05.)
+    # Train policy with multiple steps of gradient descent
+    for i in range(train_pi_iters):
+        pi_optimizer.zero_grad()
+        loss_pi, pi_info = compute_loss_pi(data)
+        # kl = mpi_avg(pi_info["kl"])
+        kl = pi_info["kl"]
+        if kl > 1.5 * target_kl:
+            print("Early stopping at step %d due to reaching max kl." % i)
+            break
+        loss_pi.backward()
+        # mpi_avg_grads(ac.pi)  # average grads across MPI processes
+        pi_optimizer.step()
 
-        logger_kwargs (dict): Keyword args for EpochLogger.
+    # Value function learning
+    for i in range(train_v_iters):
+        vf_optimizer.zero_grad()
+        loss_v = compute_loss_v(data)
+        loss_v.backward()
+        mpi_avg_grads(ac.v)  # average grads across MPI processes
+        vf_optimizer.step()
 
-        save_freq (int): How often (in terms of gap between epochs) to save
-            the current policy and value function.
+    # Log changes from update
+    # kl, ent, cf = pi_info["kl"], pi_info_old["ent"], pi_info["cf"]
+    # logger.store(
+    #     LossPi=pi_l_old,
+    #     LossV=v_l_old,
+    #     KL=kl,
+    #     Entropy=ent,
+    #     ClipFrac=cf,
+    #     DeltaLossPi=(loss_pi.item() - pi_l_old),
+    #     DeltaLossV=(loss_v.item() - v_l_old),
+    # )
 
-    """
 
-    # Random seed
-    seed += 10000 * proc_id()
-    torch.manual_seed(seed)
-    np.random.seed(seed)
+def parse_env_experience(env_experience):
+    env_experience = env_experience.decode("utf-8")
+    env_experience = env_experience.split(",")
+    observations = []
+    observation = []
+    actions = []
+    rewards = []
+    values = []
+    action_logprobs = []
+    is_done = []
+    i = 0
+    for val in env_experience:
+        if val == "":
+            break
+        if i == 0:
+            is_done.append(int(val))
+        elif i == 1:
+            actions.append(int(val))
+        elif i == 2:
+            rewards.append(int(val))
+        elif i == 3:
+            values.append(float(val))
+        elif i == 4:
+            action_logprobs.append(float(val))
+        elif i == 755:
+            i = -1
+            observations.append(observation)
+            observation = []
+        elif i >= 5:
+            observation.append(int(val))
+        i += 1
+    return observations, actions, rewards, values, action_logprobs, is_done
 
-    # Instantiate environment
-    env = env_fn()
-    obs_dim = env.observation_space.shape
-    act_dim = env.action_space.shape
 
-    # Create actor-critic module
-    ac = actor_critic(env.observation_space, env.action_space, **ac_kwargs)
-
-    # Sync params across processes
-    sync_params(ac)
-
-    # Count variables
-    var_counts = tuple(count_vars(module) for module in [ac.pi, ac.v])
-    logger.log("\nNumber of parameters: \t pi: %d, \t v: %d\n" % var_counts)
-
-    # Set up experience buffer
-    local_steps_per_epoch = int(steps_per_epoch / num_procs())
-    buf = PPOBuffer(obs_dim, act_dim, local_steps_per_epoch, gamma, lam)
-
-    # Set up function for computing PPO policy loss
-    def compute_loss_pi(data):
-        obs, act, adv, logp_old = data["obs"], data["act"], data["adv"], data["logp"]
-
-        # Policy loss
-        pi, logp = ac.pi(obs, act)
-        ratio = torch.exp(logp - logp_old)
-        clip_adv = torch.clamp(ratio, 1 - clip_ratio, 1 + clip_ratio) * adv
-        loss_pi = -(torch.min(ratio * adv, clip_adv)).mean()
-
-        # Useful extra info
-        approx_kl = (logp_old - logp).mean().item()
-        ent = pi.entropy().mean().item()
-        clipped = ratio.gt(1 + clip_ratio) | ratio.lt(1 - clip_ratio)
-        clipfrac = torch.as_tensor(clipped, dtype=torch.float32).mean().item()
-        pi_info = dict(kl=approx_kl, ent=ent, cf=clipfrac)
-
-        return loss_pi, pi_info
-
-    # Set up function for computing value loss
-    def compute_loss_v(data):
-        obs, ret = data["obs"], data["ret"]
-        return ((ac.v(obs) - ret) ** 2).mean()
-
-    # Set up optimizers for policy and value function
-    pi_optimizer = Adam(ac.pi.parameters(), lr=pi_lr)
-    vf_optimizer = Adam(ac.v.parameters(), lr=vf_lr)
-
-    # Set up model saving
-    logger.setup_pytorch_saver(ac)
-
-    def update():
-        data = buf.get()
-
-        pi_l_old, pi_info_old = compute_loss_pi(data)
-        pi_l_old = pi_l_old.item()
-        v_l_old = compute_loss_v(data).item()
-
-        # Train policy with multiple steps of gradient descent
-        for i in range(train_pi_iters):
-            pi_optimizer.zero_grad()
-            loss_pi, pi_info = compute_loss_pi(data)
-            kl = mpi_avg(pi_info["kl"])
-            if kl > 1.5 * target_kl:
-                logger.log("Early stopping at step %d due to reaching max kl." % i)
-                break
-            loss_pi.backward()
-            mpi_avg_grads(ac.pi)  # average grads across MPI processes
-            pi_optimizer.step()
-
-        logger.store(StopIter=i)
-
-        # Value function learning
-        for i in range(train_v_iters):
-            vf_optimizer.zero_grad()
-            loss_v = compute_loss_v(data)
-            loss_v.backward()
-            mpi_avg_grads(ac.v)  # average grads across MPI processes
-            vf_optimizer.step()
-
-        # Log changes from update
-        kl, ent, cf = pi_info["kl"], pi_info_old["ent"], pi_info["cf"]
-        logger.store(
-            LossPi=pi_l_old,
-            LossV=v_l_old,
-            KL=kl,
-            Entropy=ent,
-            ClipFrac=cf,
-            DeltaLossPi=(loss_pi.item() - pi_l_old),
-            DeltaLossV=(loss_v.item() - v_l_old),
-        )
-
-    # Prepare for interaction with environment
-    start_time = time.time()
-    o, ep_ret, ep_len = env.reset(), 0, 0
-
-    # Main loop: collect experience in env and update/log each epoch
-    for epoch in range(epochs):
-        for t in range(local_steps_per_epoch):
-            a, v, logp = ac.step(torch.as_tensor(o, dtype=torch.float32))
-            next_o, r, d, _ = env.step(a)
-            ep_ret += r
-            ep_len += 1
-
-            # save and log
-            buf.store(o, a, r, v, logp)
-            logger.store(VVals=v)
-
-            # Update obs (critical!)
-            o = next_o
-
-            timeout = ep_len == max_ep_len
-            terminal = d or timeout
-            epoch_ended = t == local_steps_per_epoch - 1
-
-            if terminal or epoch_ended:
-                if epoch_ended and not (terminal):
-                    print(
-                        "Warning: trajectory cut off by epoch at %d steps." % ep_len,
-                        flush=True,
-                    )
-                # if trajectory didn't reach terminal state, bootstrap value target
-                if timeout or epoch_ended:
-                    _, v, _ = ac.step(torch.as_tensor(o, dtype=torch.float32))
-                else:
-                    v = 0
-                buf.finish_path(v)
-                if terminal:
-                    # only save EpRet / EpLen if trajectory finished
-                    logger.store(EpRet=ep_ret, EpLen=ep_len)
-                o, ep_ret, ep_len = env.reset(), 0, 0
-
-        # Save model
-        if (epoch % save_freq == 0) or (epoch == epochs - 1):
-            logger.save_state({"env": env}, None)
-
-        # Perform PPO update!
-        update()
-
-        # Log info about epoch
-        logger.log_tabular("Epoch", epoch)
-        logger.log_tabular("EpRet", with_min_and_max=True)
-        logger.log_tabular("EpLen", average_only=True)
-        logger.log_tabular("VVals", with_min_and_max=True)
-        logger.log_tabular("TotalEnvInteracts", (epoch + 1) * steps_per_epoch)
-        logger.log_tabular("LossPi", average_only=True)
-        logger.log_tabular("LossV", average_only=True)
-        logger.log_tabular("DeltaLossPi", average_only=True)
-        logger.log_tabular("DeltaLossV", average_only=True)
-        logger.log_tabular("Entropy", average_only=True)
-        logger.log_tabular("KL", average_only=True)
-        logger.log_tabular("ClipFrac", average_only=True)
-        logger.log_tabular("StopIter", average_only=True)
-        logger.log_tabular("Time", time.time() - start_time)
-        logger.dump_tabular()
+def play_games(n_games):
+    p = Popen(["build/Debug/tak_cpp.exe"], stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    output, err = p.communicate(n_games)
+    return output
 
 
 if __name__ == "__main__":
     seed = 42
-    steps_per_epoch = 4000
     epochs = 50
     gamma = 0.99
+    lam = 0.97
     clip_ratio = 0.2
     pi_lr = 3e-4
     vf_lr = 1e-3
     train_pi_iters = 80
     train_v_iters = 80
-    lam = 0.97
-    max_ep_len = 1000
     target_kl = 0.01
-    logger_kwargs = dict()
-    save_freq = 10
+    n_games = b"2"
 
     # Random seed
     torch.manual_seed(seed)
     np.random.seed(seed)
 
-    # Instantiate environment
-    env = env_fn()
-    obs_dim = env.observation_space.shape
-    act_dim = env.action_space.shape
-
     # Create actor-critic module
-    ac = actor_critic(env.observation_space, env.action_space, **ac_kwargs)
-
-    # Set up experience buffer
-    local_steps_per_epoch = int(steps_per_epoch / num_procs())
-    buf = PPOBuffer(obs_dim, act_dim, local_steps_per_epoch, gamma, lam)
-
-    # Set up function for computing PPO policy loss
-    def compute_loss_pi(data):
-        obs, act, adv, logp_old = data["obs"], data["act"], data["adv"], data["logp"]
-
-        # Policy loss
-        pi, logp = ac.pi(obs, act)
-        ratio = torch.exp(logp - logp_old)
-        clip_adv = torch.clamp(ratio, 1 - clip_ratio, 1 + clip_ratio) * adv
-        loss_pi = -(torch.min(ratio * adv, clip_adv)).mean()
-
-        # Useful extra info
-        approx_kl = (logp_old - logp).mean().item()
-        ent = pi.entropy().mean().item()
-        clipped = ratio.gt(1 + clip_ratio) | ratio.lt(1 - clip_ratio)
-        clipfrac = torch.as_tensor(clipped, dtype=torch.float32).mean().item()
-        pi_info = dict(kl=approx_kl, ent=ent, cf=clipfrac)
-
-        return loss_pi, pi_info
-
-    # Set up function for computing value loss
-    def compute_loss_v(data):
-        obs, ret = data["obs"], data["ret"]
-        return ((ac.v(obs) - ret) ** 2).mean()
-
+    ac = get_actor_critic()
     # Set up optimizers for policy and value function
     pi_optimizer = Adam(ac.pi.parameters(), lr=pi_lr)
     vf_optimizer = Adam(ac.v.parameters(), lr=vf_lr)
+    save_actor_critic(ac)
+    serialize_actor_critic(ac)
 
-    def update():
-        data = buf.get()
-
-        pi_l_old, pi_info_old = compute_loss_pi(data)
-        pi_l_old = pi_l_old.item()
-        v_l_old = compute_loss_v(data).item()
-
-        # Train policy with multiple steps of gradient descent
-        for i in range(train_pi_iters):
-            pi_optimizer.zero_grad()
-            loss_pi, pi_info = compute_loss_pi(data)
-            # kl = mpi_avg(pi_info["kl"])
-            kl = pi_info["kl"]
-            if kl > 1.5 * target_kl:
-                print("Early stopping at step %d due to reaching max kl." % i)
-                break
-            loss_pi.backward()
-            # mpi_avg_grads(ac.pi)  # average grads across MPI processes
-            pi_optimizer.step()
-
-        # Value function learning
-        for i in range(train_v_iters):
-            vf_optimizer.zero_grad()
-            loss_v = compute_loss_v(data)
-            loss_v.backward()
-            mpi_avg_grads(ac.v)  # average grads across MPI processes
-            vf_optimizer.step()
-
-        # Log changes from update
-        # kl, ent, cf = pi_info["kl"], pi_info_old["ent"], pi_info["cf"]
-        # logger.store(
-        #     LossPi=pi_l_old,
-        #     LossV=v_l_old,
-        #     KL=kl,
-        #     Entropy=ent,
-        #     ClipFrac=cf,
-        #     DeltaLossPi=(loss_pi.item() - pi_l_old),
-        #     DeltaLossV=(loss_v.item() - v_l_old),
-        # )
-
-    # Prepare for interaction with environment
-    o, ep_ret, ep_len = env.reset(), 0, 0
-
-    # Main loop: collect experience in env and update/log each epoch
+    # Main loop: collect experience in env and update AC
     for epoch in range(epochs):
-        for t in range(local_steps_per_epoch):
-            a, v, logp = ac.step(torch.as_tensor(o, dtype=torch.float32))
+        experience = play_games(n_games)
+        (
+            observations,
+            actions,
+            rewards,
+            values,
+            action_logprobs,
+            is_done,
+        ) = parse_env_experience(experience)
 
-            next_o, r, d, _ = env.step(a)
-            ep_ret += r
-            ep_len += 1
-
-            # save and log
-            buf.store(o, a, r, v, logp)
-            # logger.store(VVals=v)
-
-            # Update obs (critical!)
-            o = next_o
-
-            timeout = ep_len == max_ep_len
-            terminal = d or timeout
-            epoch_ended = t == local_steps_per_epoch - 1
-
-            if terminal or epoch_ended:
-                if epoch_ended and not (terminal):
-                    print(
-                        "Warning: trajectory cut off by epoch at %d steps." % ep_len,
-                        flush=True,
-                    )
-                # if trajectory didn't reach terminal state, bootstrap value target
-                if timeout or epoch_ended:
-                    _, v, _ = ac.step(torch.as_tensor(o, dtype=torch.float32))
-                else:
-                    v = 0
-                buf.finish_path(v)
-                if terminal:
-                    # only save EpRet / EpLen if trajectory finished
-                    # logger.store(EpRet=ep_ret, EpLen=ep_len)
-                    o, ep_ret, ep_len = env.reset(), 0, 0
-
-        # Save model
-        # if (epoch % save_freq == 0) or (epoch == epochs - 1):
-        #     logger.save_state({"env": env}, None)
-
-        # Perform PPO update!
-        update()
+        buffer = PPOBuffer(
+            observations, actions, rewards, values, action_logprobs, is_done, gamma, lam
+        )
+        buffer.finish_path()
+        update_ppo(buffer)
+        serialize_actor_critic(ac)

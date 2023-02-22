@@ -63,7 +63,7 @@ Initialize players with trained model. Reset the board.
 *******************************************************/
 TakEnv::TakEnv()
 {
-    player = torch::jit::load("C:\\Users\\Jesse\\Projects\\tak_cpp\\data\\traced_ac.pt");
+    player = torch::jit::load("C:\\Users\\Jesse\\Projects\\tak_cpp\\data\\serialized_ac.pt");
     ExperienceBuffer white_player_experience = ExperienceBuffer();
     ExperienceBuffer black_player_experience = ExperienceBuffer();
     player.eval();
@@ -170,7 +170,6 @@ void TakEnv::write_player_experience(string ss, ExperienceBuffer &player_exp)
         {
             ss += std::to_string(i) += delimiter;
         }
-        // ss += "\n";
         std::cout << ss;
         ss.clear();
     }
