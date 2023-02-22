@@ -87,6 +87,14 @@ class Actor(nn.Module):
         act = act[..., :1]
         return log_pmf.gather(-1, act).squeeze(-1)
 
+    def forward_loss(self, obs, act):
+        # Produce action distributions for given observations, and
+        # optionally compute the log likelihood of given actions under
+        # those distributions.
+        logits = self.policy_net(obs)
+        logp_a = self.get_action_log_prob(logits, act)
+        return logp_a
+
     def forward(self, obs, valid_actions):
         """
         Produce action distributions for given observations
@@ -183,7 +191,8 @@ class PPOBuffer:
         """
 
         # the next two lines implement the advantage normalization trick
-        adv_mean, adv_std = mpi_statistics_scalar(self.adv_buf)
+        adv_std = np.std(self.adv_buf)
+        adv_mean = np.mean(self.adv_buf)
         self.adv_buf = (self.adv_buf - adv_mean) / adv_std
         data = dict(
             obs=self.obs_buf,
@@ -195,22 +204,22 @@ class PPOBuffer:
         return {k: torch.as_tensor(v, dtype=torch.float32) for k, v in data.items()}
 
 
-def compute_loss_pi(data):
+def compute_loss_pi(data, ac):
     """Set up function for computing PPO policy loss"""
     obs, act, adv, logp_old = data["obs"], data["act"], data["adv"], data["logp"]
 
     # Policy loss
-    pi, logp = ac.pi(obs, act)
+    logp = ac.pi.forward_loss(obs, act)
     ratio = torch.exp(logp - logp_old)
     clip_adv = torch.clamp(ratio, 1 - clip_ratio, 1 + clip_ratio) * adv
     loss_pi = -(torch.min(ratio * adv, clip_adv)).mean()
 
     # Useful extra info
     approx_kl = (logp_old - logp).mean().item()
-    ent = pi.entropy().mean().item()
+    # ent = pi.entropy().mean().item()
     clipped = ratio.gt(1 + clip_ratio) | ratio.lt(1 - clip_ratio)
     clipfrac = torch.as_tensor(clipped, dtype=torch.float32).mean().item()
-    pi_info = dict(kl=approx_kl, ent=ent, cf=clipfrac)
+    pi_info = dict(kl=approx_kl, cf=clipfrac)
 
     return loss_pi, pi_info
 
@@ -243,17 +252,17 @@ def get_actor_critic(load_from_disk=False):
     return ActorCritic()
 
 
-def update_ppo(buffer):
+def update_ppo(buffer, ac, train_pi_iters, train_v_iters):
     data = buffer.get()
 
-    pi_l_old, pi_info_old = compute_loss_pi(data)
+    pi_l_old, pi_info_old = compute_loss_pi(data, ac)
     pi_l_old = pi_l_old.item()
     v_l_old = compute_loss_v(data).item()
 
     # Train policy with multiple steps of gradient descent
     for i in range(train_pi_iters):
         pi_optimizer.zero_grad()
-        loss_pi, pi_info = compute_loss_pi(data)
+        loss_pi, pi_info = compute_loss_pi(data, ac)
         # kl = mpi_avg(pi_info["kl"])
         kl = pi_info["kl"]
         if kl > 1.5 * target_kl:
@@ -268,9 +277,11 @@ def update_ppo(buffer):
         vf_optimizer.zero_grad()
         loss_v = compute_loss_v(data)
         loss_v.backward()
-        mpi_avg_grads(ac.v)  # average grads across MPI processes
+        # mpi_avg_grads(ac.v)  # average grads across MPI processes
         vf_optimizer.step()
 
+    # print(pi_info_old)
+    # print(v_l_old)
     # Log changes from update
     # kl, ent, cf = pi_info["kl"], pi_info_old["ent"], pi_info["cf"]
     # logger.store(
@@ -365,5 +376,6 @@ if __name__ == "__main__":
             observations, actions, rewards, values, action_logprobs, is_done, gamma, lam
         )
         buffer.finish_path()
-        update_ppo(buffer)
+        update_ppo(buffer, ac, train_pi_iters, train_v_iters)
         serialize_actor_critic(ac)
+        save_actor_critic(ac)
