@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam
 import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
 from itertools import accumulate
 from subprocess import Popen, PIPE
 
@@ -49,11 +50,15 @@ class Critic(nn.Module):
     def __init__(self):
         super().__init__()
         self.v_net = nn.Sequential(
-            nn.Linear(750, 450),
+            nn.Linear(750, 650),
             nn.ReLU(),
-            nn.Linear(450, 250),
+            nn.Linear(650, 550),
             nn.ReLU(),
-            nn.Linear(250, 1),
+            nn.Linear(550, 450),
+            nn.ReLU(),
+            nn.Linear(450, 350),
+            nn.ReLU(),
+            nn.Linear(350, 1),
         )
 
     def forward(self, obs):
@@ -70,9 +75,15 @@ class Actor(nn.Module):
             nn.ReLU(),
             nn.Linear(950, 1050),
             nn.ReLU(),
-            nn.Linear(1050, 1250),
+            nn.Linear(1050, 1150),
             nn.ReLU(),
-            nn.Linear(1250, 1575),
+            nn.Linear(1150, 1250),
+            nn.ReLU(),
+            nn.Linear(1250, 1350),
+            nn.ReLU(),
+            nn.Linear(1350, 1450),
+            nn.ReLU(),
+            nn.Linear(1450, 1575),
         )
 
     def sample_action(self, logits):
@@ -103,7 +114,8 @@ class Actor(nn.Module):
         masked_logits = torch.where(valid_actions > 0, logits, torch.tensor([-1e8]))
         masked_logits = masked_logits - masked_logits.logsumexp(dim=-1, keepdim=True)
         action = self.sample_action(masked_logits)
-        logp_a = self.get_action_log_prob(masked_logits, action)
+        # TODO: Logits or masked logits to get log_prob?
+        logp_a = self.get_action_log_prob(logits, action)
         return action, logp_a
 
 
@@ -124,6 +136,28 @@ class ActorCritic(nn.Module):
         action, logp_a = self.pi.forward(obs, valid_action_mask)
         v = self.v(obs)
         return torch.cat([action, logp_a, v])
+
+
+def serialize_actor_critic(ac_model):
+    sm = torch.jit.script(ac_model)
+    # print(sm.forward(torch.rand((2325))))
+    sm.save(SERIALIZED_AC_LOC)
+
+
+def save_actor_critic(ac_model):
+    torch.save(ac_model, AC_LOC)
+
+
+def loac_actor_critic():
+    return torch.load(AC_LOC)
+
+
+def get_actor_critic(load_from_disk=False):
+    """Create a new Actor-Critic module or load one from disk."""
+    if load_from_disk:
+        if os.path.exists(AC_LOC):
+            return loac_actor_critic()
+    return ActorCritic()
 
 
 class PPOBuffer:
@@ -204,9 +238,37 @@ class PPOBuffer:
         return {k: torch.as_tensor(v, dtype=torch.float32) for k, v in data.items()}
 
 
-def compute_loss_pi(data, ac):
+class ActorDataset(Dataset):
+    def __init__(self, data):
+        self.obs = data["obs"]
+        self.act = data["act"]
+        self.adv = data["adv"]
+        self.logp_old = data["logp"]
+        assert len(self.obs) == len(self.act) == len(self.adv) == len(self.logp_old)
+
+    def __len__(self):
+        return len(self.obs)
+
+    def __getitem__(self, idx):
+        return self.obs[idx], self.act[idx], self.adv[idx], self.logp_old[idx]
+
+
+class CriticDataset(Dataset):
+    def __init__(self, data):
+        self.obs = data["obs"]
+        self.ret = data["ret"]
+        assert len(self.obs) == len(self.ret)
+
+    def __len__(self):
+        return len(self.obs)
+
+    def __getitem__(self, idx):
+        return self.obs[idx], self.ret[idx]
+
+
+def compute_loss_pi(obs, act, adv, logp_old, ac):
     """Set up function for computing PPO policy loss"""
-    obs, act, adv, logp_old = data["obs"], data["act"], data["adv"], data["logp"]
+    # obs, act, adv, logp_old = data["obs"], data["act"], data["adv"], data["logp"]
 
     # Policy loss
     logp = ac.pi.forward_loss(obs, act)
@@ -224,61 +286,56 @@ def compute_loss_pi(data, ac):
     return loss_pi, pi_info
 
 
-def compute_loss_v(data):
+def compute_loss_v(obs, ret):
     """Set up function for computing value loss"""
-    obs, ret = data["obs"], data["ret"]
-    return ((ac.v(obs) - ret) ** 2).mean()
+    # obs, ret = data["obs"], data["ret"]
+    pred_ret = ac.v(obs).squeeze()
+    return ((pred_ret - ret) ** 2).mean()
 
 
-def serialize_actor_critic(ac_model):
-    sm = torch.jit.script(ac_model)
-    # print(sm.forward(torch.rand((2325))))
-    sm.save(SERIALIZED_AC_LOC)
-
-
-def save_actor_critic(ac_model):
-    torch.save(ac_model, AC_LOC)
-
-
-def loac_actor_critic():
-    return torch.load(AC_LOC)
-
-
-def get_actor_critic(load_from_disk=False):
-    """Create a new Actor-Critic module or load one from disk."""
-    if load_from_disk:
-        if os.path.exists(AC_LOC):
-            return loac_actor_critic()
-    return ActorCritic()
-
-
-def update_ppo(buffer, ac, train_pi_iters, train_v_iters):
+def update_ppo(buffer, ac, batch_size, train_pi_iters, train_v_iters):
+    # Build data loaders
     data = buffer.get()
+    actor_ds = ActorDataset(data)
+    critic_ds = CriticDataset(data)
+    actor_dataloader = DataLoader(
+        actor_ds, batch_size=batch_size, shuffle=True, num_workers=0
+    )
+    critic_dataloader = DataLoader(
+        critic_ds, batch_size=batch_size, shuffle=True, num_workers=0
+    )
 
-    pi_l_old, pi_info_old = compute_loss_pi(data, ac)
-    pi_l_old = pi_l_old.item()
-    v_l_old = compute_loss_v(data).item()
+    # pi_l_old, pi_info_old = compute_loss_pi(actor_dataloader, ac)
+    # pi_l_old = pi_l_old.item()
+    # v_l_old = compute_loss_v(data).item()
 
     # Train policy with multiple steps of gradient descent
     for i in range(train_pi_iters):
-        pi_optimizer.zero_grad()
-        loss_pi, pi_info = compute_loss_pi(data, ac)
-        # kl = mpi_avg(pi_info["kl"])
-        kl = pi_info["kl"]
+        for obs, act, adv, logp_old in actor_dataloader:
+            pi_optimizer.zero_grad()
+            loss_pi, pi_info = compute_loss_pi(obs, act, adv, logp_old, ac)
+            print(pi_info)
+            # kl = mpi_avg(pi_info["kl"])
+            kl = pi_info["kl"]
+            if kl > 1.5 * target_kl:
+                break
+            loss_pi.backward()
+            # mpi_avg_grads(ac.pi)  # average grads across MPI processes
+            pi_optimizer.step()
         if kl > 1.5 * target_kl:
             print("Early stopping at step %d due to reaching max kl." % i)
             break
-        loss_pi.backward()
-        # mpi_avg_grads(ac.pi)  # average grads across MPI processes
-        pi_optimizer.step()
 
     # Value function learning
     for i in range(train_v_iters):
-        vf_optimizer.zero_grad()
-        loss_v = compute_loss_v(data)
-        loss_v.backward()
-        # mpi_avg_grads(ac.v)  # average grads across MPI processes
-        vf_optimizer.step()
+        for obs, ret in critic_dataloader:
+            vf_optimizer.zero_grad()
+            loss_v = compute_loss_v(obs, ret)
+            loss_v.backward()
+            # mpi_avg_grads(ac.v)  # average grads across MPI processes
+            vf_optimizer.step()
+        if i % 10 == 0:
+            print(f"value loss: {loss_v.item()}")
 
     # print(pi_info_old)
     # print(v_l_old)
@@ -337,16 +394,16 @@ def play_games(n_games):
 
 if __name__ == "__main__":
     seed = 42
-    epochs = 50
     gamma = 0.99
     lam = 0.97
     clip_ratio = 0.2
     pi_lr = 3e-4
     vf_lr = 1e-3
+    batch_size = 256
     train_pi_iters = 80
     train_v_iters = 80
     target_kl = 0.01
-    n_games = b"2"
+    n_games = b"5"
 
     # Random seed
     torch.manual_seed(seed)
@@ -357,11 +414,11 @@ if __name__ == "__main__":
     # Set up optimizers for policy and value function
     pi_optimizer = Adam(ac.pi.parameters(), lr=pi_lr)
     vf_optimizer = Adam(ac.v.parameters(), lr=vf_lr)
-    save_actor_critic(ac)
+    # save_actor_critic(ac)
     serialize_actor_critic(ac)
 
     # Main loop: collect experience in env and update AC
-    for epoch in range(epochs):
+    while True:
         experience = play_games(n_games)
         (
             observations,
@@ -376,6 +433,6 @@ if __name__ == "__main__":
             observations, actions, rewards, values, action_logprobs, is_done, gamma, lam
         )
         buffer.finish_path()
-        update_ppo(buffer, ac, train_pi_iters, train_v_iters)
+        update_ppo(buffer, ac, batch_size, train_pi_iters, train_v_iters)
         serialize_actor_critic(ac)
-        save_actor_critic(ac)
+        # save_actor_critic(ac)
