@@ -4,7 +4,11 @@
 #include <torch/script.h>
 #include <memory>
 #include <chrono>
+#include <string>
 
+/******************************************************
+Save the experience gathered in an environment
+*******************************************************/
 struct Experience
 {
     vector<int> observation;
@@ -39,8 +43,7 @@ struct ExperienceBuffer
 };
 
 /******************************************************
-A Tak environment has two players, which are controlled
-by the same policy, and a board.
+Tak environment used during training
 *******************************************************/
 class TakEnv
 {
@@ -50,10 +53,10 @@ private:
     void write_player_experience(string, ExperienceBuffer &);
 
 public:
-    TakEnv();
+    TakEnv(string);
     torch::jit::script::Module player;
     Board board;
-    void reset();
+    void reset() { board.reset_board(); };
     bool step();
     void write_experience_to_cout();
 };
@@ -61,21 +64,13 @@ public:
 /******************************************************
 Initialize players with trained model. Reset the board.
 *******************************************************/
-TakEnv::TakEnv()
+TakEnv::TakEnv(string ac_path)
 {
-    player = torch::jit::load("C:\\Users\\Jesse\\Projects\\tak_cpp\\data\\serialized_ac.pt");
+    player = torch::jit::load("C:\\Users\\Jesse\\Projects\\tak_cpp\\players\\" + ac_path);
     ExperienceBuffer white_player_experience = ExperienceBuffer();
     ExperienceBuffer black_player_experience = ExperienceBuffer();
     player.eval();
     reset();
-}
-
-/******************************************************
-Reset the board state
-*******************************************************/
-void TakEnv::reset()
-{
-    board.reset_board();
 }
 
 /******************************************************
@@ -86,6 +81,7 @@ Save all necessary state.
 *******************************************************/
 bool TakEnv::step()
 {
+    torch::NoGradGuard no_grad;
     // Get necessary state from the board
     vector<int> obs = board.get_board_state();
     vector<int> moves_mask = board.get_valid_moves_mask();
@@ -114,7 +110,7 @@ bool TakEnv::step()
     int is_done = 0;
     if (game_ends)
     {
-        char winner = win_conditions.game_ends;
+        char winner = win_conditions.winner;
         if (winner == 'T') // A tie in a flat win.
         {
             reward = 0;
@@ -186,19 +182,114 @@ void TakEnv::write_experience_to_cout()
     write_player_experience(ss, black_player_experience);
 }
 
-int main()
+/******************************************************
+Tak environment used during testing.
+The player needs to beat the opponent
+*******************************************************/
+class TakEnvTest
 {
-    int games_to_play;
-    cin >> games_to_play;
-    TakEnv env = TakEnv();
-    for (int i = 0; i < games_to_play; i++)
+public:
+    TakEnvTest(string, string);
+    torch::jit::script::Module player;
+    torch::jit::script::Module opponent;
+    Board board;
+    void reset() { board.reset_board(); };
+    char step(bool);
+};
+
+/******************************************************
+Initialize players with trained model. Reset the board.
+*******************************************************/
+TakEnvTest::TakEnvTest(string player_path, string opponent_path)
+{
+    player = torch::jit::load("C:\\Users\\Jesse\\Projects\\tak_cpp\\players\\" + player_path);
+    opponent = torch::jit::load("C:\\Users\\Jesse\\Projects\\tak_cpp\\opponents\\" + opponent_path);
+    player.eval();
+    opponent.eval();
+    reset();
+}
+
+/******************************************************
+One step in a competitive game between two policies.
+If step returns "P" - player won
+If step returns "O" - opponent won
+If step returns "T" - tie
+If step returns "C" - game is not done
+*******************************************************/
+char TakEnvTest::step(bool opponent_starts)
+{
+    torch::NoGradGuard no_grad;
+    // Get necessary state from the board
+    vector<int> obs = board.get_board_state();
+    vector<int> moves_mask = board.get_valid_moves_mask();
+    // Create Tensor input
+    torch::Tensor obs_tensor = torch::from_blob(obs.data(), obs.size(), torch::TensorOptions().device(torch::kCPU));
+    torch::Tensor moves_tensor = torch::from_blob(moves_mask.data(), moves_mask.size(), torch::TensorOptions().device(torch::kCPU));
+    torch::Tensor arr[2] = {obs_tensor, moves_tensor};
+    torch::Tensor input_tensor = torch::cat(arr);
+    std::vector<torch::jit::IValue> inputs;
+    inputs.push_back(input_tensor);
+    // Pick a move
+    char active_player = board.get_active_player();
+    at::Tensor output;
+    if (opponent_starts)
     {
-        bool game_ends = false;
-        while (!game_ends)
+        // Opponent is white
+        if (active_player == 'W')
         {
-            game_ends = env.step();
+            output = opponent.forward(inputs).toTensor();
         }
-        env.reset();
+        else
+        {
+            output = player.forward(inputs).toTensor();
+        }
     }
-    env.write_experience_to_cout();
+    else
+    {
+        // Opponent is black
+        if (active_player == 'W')
+        {
+            output = player.forward(inputs).toTensor();
+        }
+        else
+        {
+            output = opponent.forward(inputs).toTensor();
+        }
+    }
+    // Output contains [action, logp_a, v]
+    int action = output[0].item<int>();
+    // Execute the chosen move on the board.
+    WinConditions win_conditions = board.take_action(action);
+    bool game_ends = win_conditions.game_ends;
+    if (game_ends)
+    {
+        char winner = win_conditions.winner;
+        if (winner == 'T') // A tie in a flat win.
+        {
+            return 'T';
+        }
+        if (winner == 'W')
+        {
+            if (opponent_starts)
+            {
+                return 'O';
+            }
+            else
+            {
+                return 'P';
+            }
+        }
+        if (winner == 'B')
+        {
+            if (opponent_starts)
+            {
+                return 'P';
+            }
+            else
+            {
+                return 'O';
+            }
+        }
+    }
+    return 'C';
 }

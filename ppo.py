@@ -14,8 +14,10 @@ from itertools import accumulate
 from subprocess import Popen, PIPE
 
 
-SERIALIZED_AC_LOC = "C:\\Users\\Jesse\\Projects\\tak_cpp\\data\\serialized_ac.pt"
+PLAYER_AC_LOC = "C:\\Users\\Jesse\\Projects\\tak_cpp\\players"
+OPPONENT_AC_LOC = "C:\\Users\\Jesse\\Projects\\tak_cpp\\opponents"
 AC_LOC = "C:\\Users\\Jesse\\Projects\\tak_cpp\\data\\ac.pt"
+TMP_LOC = "C:\\Users\\Jesse\\Projects\\tak_cpp\\tmp\\"
 
 
 def combined_shape(length, shape=None):
@@ -69,7 +71,9 @@ class Actor(nn.Module):
     def __init__(self):
         super().__init__()
         self.policy_net = nn.Sequential(
-            nn.Linear(750, 850),
+            nn.Linear(750, 800),
+            nn.ReLU(),
+            nn.Linear(800, 850),
             nn.ReLU(),
             nn.Linear(850, 950),
             nn.ReLU(),
@@ -103,6 +107,7 @@ class Actor(nn.Module):
         # optionally compute the log likelihood of given actions under
         # those distributions.
         logits = self.policy_net(obs)
+        logits = logits - logits.logsumexp(dim=-1, keepdim=True)
         logp_a = self.get_action_log_prob(logits, act)
         return logp_a
 
@@ -111,10 +116,12 @@ class Actor(nn.Module):
         Produce action distributions for given observations
         """
         logits = self.policy_net(obs)
+        # Normalize logits: https://github.com/pytorch/pytorch/blob/master/torch/distributions/categorical.py
+        logits = logits - logits.logsumexp(dim=-1, keepdim=True)
+
         masked_logits = torch.where(valid_actions > 0, logits, torch.tensor([-1e8]))
-        masked_logits = masked_logits - masked_logits.logsumexp(dim=-1, keepdim=True)
         action = self.sample_action(masked_logits)
-        # TODO: Logits or masked logits to get log_prob?
+
         logp_a = self.get_action_log_prob(logits, action)
         return action, logp_a
 
@@ -138,10 +145,35 @@ class ActorCritic(nn.Module):
         return torch.cat([action, logp_a, v])
 
 
-def serialize_actor_critic(ac_model):
+def save_player(ac_model, total_iterations: int):
+    # Overwrite the oldest AC if there are more than 5 in the directory
+    ac_filenames = os.listdir(PLAYER_AC_LOC)
+    if len(ac_filenames) > 4:
+        ac_iters = [int(fn.split("_")[-1].split(".")[0]) for fn in ac_filenames]
+        smallest_idx = ac_iters.index(min(ac_iters))
+        ac_filename_to_delete = ac_filenames[smallest_idx]
+        os.remove(PLAYER_AC_LOC + "\\" + ac_filename_to_delete)
+
     sm = torch.jit.script(ac_model)
     # print(sm.forward(torch.rand((2325))))
-    sm.save(SERIALIZED_AC_LOC)
+    player_ac = f"serialized_ac_{total_iterations}.pt"
+    sm.save(PLAYER_AC_LOC + "\\" + player_ac)
+    return player_ac
+
+
+def save_opponent(ac_model, total_iterations: int):
+    # Overwrite the oldest AC if there are more than 5 in the directory
+    ac_filenames = os.listdir(OPPONENT_AC_LOC)
+    if len(ac_filenames) > 4:
+        ac_iters = [int(fn.split("_")[-1].split(".")[0]) for fn in ac_filenames]
+        smallest_idx = ac_iters.index(min(ac_iters))
+        ac_filename_to_delete = ac_filenames[smallest_idx]
+        os.remove(OPPONENT_AC_LOC + "\\" + ac_filename_to_delete)
+
+    sm = torch.jit.script(ac_model)
+    opp_ac = f"serialized_ac_{total_iterations}.pt"
+    sm.save(OPPONENT_AC_LOC + "\\" + opp_ac)
+    return opp_ac
 
 
 def save_actor_critic(ac_model):
@@ -305,24 +337,18 @@ def update_ppo(buffer, ac, batch_size, train_pi_iters, train_v_iters):
         critic_ds, batch_size=batch_size, shuffle=True, num_workers=0
     )
 
-    # pi_l_old, pi_info_old = compute_loss_pi(actor_dataloader, ac)
-    # pi_l_old = pi_l_old.item()
-    # v_l_old = compute_loss_v(data).item()
-
     # Train policy with multiple steps of gradient descent
     for i in range(train_pi_iters):
         for obs, act, adv, logp_old in actor_dataloader:
             pi_optimizer.zero_grad()
             loss_pi, pi_info = compute_loss_pi(obs, act, adv, logp_old, ac)
             print(pi_info)
-            # kl = mpi_avg(pi_info["kl"])
             kl = pi_info["kl"]
-            if kl > 1.5 * target_kl:
+            if kl > target_kl:
                 break
             loss_pi.backward()
-            # mpi_avg_grads(ac.pi)  # average grads across MPI processes
             pi_optimizer.step()
-        if kl > 1.5 * target_kl:
+        if kl > target_kl:
             print("Early stopping at step %d due to reaching max kl." % i)
             break
 
@@ -332,24 +358,9 @@ def update_ppo(buffer, ac, batch_size, train_pi_iters, train_v_iters):
             vf_optimizer.zero_grad()
             loss_v = compute_loss_v(obs, ret)
             loss_v.backward()
-            # mpi_avg_grads(ac.v)  # average grads across MPI processes
             vf_optimizer.step()
         if i % 10 == 0:
             print(f"value loss: {loss_v.item()}")
-
-    # print(pi_info_old)
-    # print(v_l_old)
-    # Log changes from update
-    # kl, ent, cf = pi_info["kl"], pi_info_old["ent"], pi_info["cf"]
-    # logger.store(
-    #     LossPi=pi_l_old,
-    #     LossV=v_l_old,
-    #     KL=kl,
-    #     Entropy=ent,
-    #     ClipFrac=cf,
-    #     DeltaLossPi=(loss_pi.item() - pi_l_old),
-    #     DeltaLossV=(loss_v.item() - v_l_old),
-    # )
 
 
 def parse_env_experience(env_experience):
@@ -386,9 +397,12 @@ def parse_env_experience(env_experience):
     return observations, actions, rewards, values, action_logprobs, is_done
 
 
-def play_games(n_games):
-    p = Popen(["build/Debug/tak_cpp.exe"], stdin=PIPE, stdout=PIPE, stderr=PIPE)
-    output, err = p.communicate(n_games)
+def play_games(ac_filename, n_games):
+    # Environment process
+    p = Popen(["build/Debug/train_env.exe"], stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    # Separate inputs with newlines
+    process_input = f"{ac_filename}\n{n_games}"
+    output, err = p.communicate(process_input.encode("utf-8"))
     return output
 
 
@@ -399,11 +413,12 @@ if __name__ == "__main__":
     clip_ratio = 0.2
     pi_lr = 3e-4
     vf_lr = 1e-3
-    batch_size = 256
+    batch_size = 512
     train_pi_iters = 80
-    train_v_iters = 80
-    target_kl = 0.01
-    n_games = b"5"
+    train_v_iters = 50
+    target_kl = 0.4
+    n_games = "100"
+    total_iterations = 0
 
     # Random seed
     torch.manual_seed(seed)
@@ -414,12 +429,18 @@ if __name__ == "__main__":
     # Set up optimizers for policy and value function
     pi_optimizer = Adam(ac.pi.parameters(), lr=pi_lr)
     vf_optimizer = Adam(ac.v.parameters(), lr=vf_lr)
-    # save_actor_critic(ac)
-    serialize_actor_critic(ac)
+
+    player_ac = save_player(ac, total_iterations)
+    opp_ac = save_opponent(ac, total_iterations)
 
     # Main loop: collect experience in env and update AC
     while True:
-        experience = play_games(n_games)
+        # Alwyas start playing games with the AC that has been trained the longest.
+        # ac_filenames = os.listdir(PLAYER_AC_LOC)
+        # ac_iters = [int(fn.split("_")[-1].split(".")[0]) for fn in ac_filenames]
+        # largest_idx = ac_iters.index(max(ac_iters))
+        # player_ac = ac_filenames[largest_idx]
+        experience = play_games(player_ac, n_games)
         (
             observations,
             actions,
@@ -434,5 +455,21 @@ if __name__ == "__main__":
         )
         buffer.finish_path()
         update_ppo(buffer, ac, batch_size, train_pi_iters, train_v_iters)
-        serialize_actor_critic(ac)
-        # save_actor_critic(ac)
+
+        total_iterations += 1
+        player_ac = save_player(ac, total_iterations)
+
+        if total_iterations % 5 == 0 and total_iterations > 0:
+            # If this player can reliably beat the best opponent, it becomes the new opponent.
+            p = Popen(
+                ["build/Debug/test_env.exe"], stdin=PIPE, stdout=PIPE, stderr=PIPE
+            )
+            # Separate inputs with newlines
+            process_input = f"{player_ac}\n{opp_ac}"
+            output, _ = p.communicate(process_input.encode("utf-8"))
+            output = output.decode("utf-8")
+            output = output.split(",")
+            player_wins = output.count("P")
+            print(f"Player wins: {player_wins}")
+            if output.count("P") >= 18:
+                opp_ac = save_opponent(ac, total_iterations)

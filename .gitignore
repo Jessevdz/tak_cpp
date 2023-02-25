@@ -8,3 +8,6 @@ build/*
 .venv/
 __pycache__/*
 data/*
+tmp/*
+players/*
+opponents/*
