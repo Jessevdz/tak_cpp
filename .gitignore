@@ -2,7 +2,6 @@
 *.exe
 lib/*
 example-app.cpp
-CMakeLists.txt
 build/*
 .venv/
 __pycache__/*
