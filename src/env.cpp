@@ -66,7 +66,7 @@ Initialize players with trained model. Reset the board.
 *******************************************************/
 TakEnv::TakEnv(string ac_path)
 {
-    player = torch::jit::load("C:\\Users\\Jesse\\Projects\\tak_cpp\\players\\" + ac_path);
+    player = torch::jit::load(ac_path);
     ExperienceBuffer white_player_experience = ExperienceBuffer();
     ExperienceBuffer black_player_experience = ExperienceBuffer();
     player.eval();
@@ -202,8 +202,8 @@ Initialize players with trained model. Reset the board.
 *******************************************************/
 TakEnvTest::TakEnvTest(string player_path, string opponent_path)
 {
-    player = torch::jit::load("C:\\Users\\Jesse\\Projects\\tak_cpp\\players\\" + player_path);
-    opponent = torch::jit::load("C:\\Users\\Jesse\\Projects\\tak_cpp\\opponents\\" + opponent_path);
+    player = torch::jit::load(player_path);
+    opponent = torch::jit::load(opponent_path);
     player.eval();
     opponent.eval();
     reset();
