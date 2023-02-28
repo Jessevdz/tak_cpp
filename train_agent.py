@@ -145,6 +145,13 @@ class ActorCritic(nn.Module):
         return torch.cat([action, logp_a, v])
 
 
+def find_filename_largest_iteration(loc: str):
+    filenames = os.listdir(loc)
+    iters = [int(fn.split("_")[-1].split(".")[0]) for fn in filenames]
+    largest_idx = iters.index(max(iters))
+    return filenames[largest_idx]
+
+
 def save_player(ac_model, total_iterations: int):
     # Overwrite the oldest AC if there are more than 5 in the directory
     ac_filenames = os.listdir(PLAYER_AC_LOC)
@@ -174,14 +181,6 @@ def save_opponent(ac_model, total_iterations: int):
     opp_ac = f"serialized_ac_{total_iterations}.pt"
     sm.save(OPPONENT_AC_LOC + "\\" + opp_ac)
     return opp_ac
-
-
-def save_actor_critic(ac_model):
-    torch.save(ac_model, AC_LOC)
-
-
-def loac_actor_critic():
-    return torch.load(AC_LOC)
 
 
 def get_actor_critic(load_from_disk=False):
@@ -413,11 +412,12 @@ if __name__ == "__main__":
     clip_ratio = 0.2
     pi_lr = 3e-4
     vf_lr = 1e-3
-    batch_size = 512
-    train_pi_iters = 80
-    train_v_iters = 50
-    target_kl = 0.4
-    n_games = "100"
+    # 512 batch, 40 iters, 20 games
+    batch_size = 1024
+    train_pi_iters = 40
+    train_v_iters = 80
+    target_kl = 5.0
+    n_games = "40"
     total_iterations = 0
 
     # Random seed
@@ -429,17 +429,11 @@ if __name__ == "__main__":
     # Set up optimizers for policy and value function
     pi_optimizer = Adam(ac.pi.parameters(), lr=pi_lr)
     vf_optimizer = Adam(ac.v.parameters(), lr=vf_lr)
-
     player_ac = save_player(ac, total_iterations)
     opp_ac = save_opponent(ac, total_iterations)
 
     # Main loop: collect experience in env and update AC
     while True:
-        # Alwyas start playing games with the AC that has been trained the longest.
-        # ac_filenames = os.listdir(PLAYER_AC_LOC)
-        # ac_iters = [int(fn.split("_")[-1].split(".")[0]) for fn in ac_filenames]
-        # largest_idx = ac_iters.index(max(ac_iters))
-        # player_ac = ac_filenames[largest_idx]
         experience = play_games(player_ac, n_games)
         (
             observations,

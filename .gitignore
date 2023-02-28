@@ -1,7 +1,6 @@
 .vscode/
 *.exe
-libtorch_release/*
-libtorch_debug/*
+lib/*
 example-app.cpp
 CMakeLists.txt
 build/*
@@ -9,5 +8,5 @@ build/*
 __pycache__/*
 data/*
 tmp/*
-players/*
-opponents/*
+agents/*
+tests/*
