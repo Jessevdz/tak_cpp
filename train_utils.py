@@ -1,4 +1,4 @@
-AC_WEIGHTS_LOC = "C:\\Users\\Jesse\\Projects\\tak_cpp\\agents\\ac_weights"
+AC_WEIGHTS_LOC = "C:\\Users\\Jesse\\Projects\\tak_cpp\\agents\\players"
 # The current candidate that new models need to try and beat
 CANDIDATE_LOC = (
     "C:\\Users\\Jesse\\Projects\\tak_cpp\\agents\\serialized\\candidate_player.pt"

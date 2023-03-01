@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam
 import torch.nn.functional as F
+import torch.distributed as dist
+import torch.multiprocessing as mp
 from torch.utils.data import Dataset, DataLoader
 from train_utils import (
     discount_cumsum,
@@ -207,10 +209,10 @@ class PPOBuffer:
 
 class ActorDataset(Dataset):
     def __init__(self, data):
-        self.obs = data["obs"]
-        self.act = data["act"]
-        self.adv = data["adv"]
-        self.logp_old = data["logp"]
+        self.obs = data["obs"].to("cuda:0")
+        self.act = data["act"].to("cuda:0")
+        self.adv = data["adv"].to("cuda:0")
+        self.logp_old = data["logp"].to("cuda:0")
         assert len(self.obs) == len(self.act) == len(self.adv) == len(self.logp_old)
 
     def __len__(self):
@@ -222,8 +224,8 @@ class ActorDataset(Dataset):
 
 class CriticDataset(Dataset):
     def __init__(self, data):
-        self.obs = data["obs"]
-        self.ret = data["ret"]
+        self.obs = data["obs"].to("cuda:0")
+        self.ret = data["ret"].to("cuda:0")
         assert len(self.obs) == len(self.ret)
 
     def __len__(self):
@@ -297,10 +299,6 @@ def update_ppo(buffer, ac, batch_size, train_pi_iters, train_v_iters):
             print(f"value loss: {loss_v.item()}")
 
 
-import torch.distributed as dist
-import torch.multiprocessing as mp
-
-
 def average_gradients(model):
     """Gradient averaging."""
     size = float(dist.get_world_size())
@@ -315,10 +313,10 @@ def run(rank, size):
     vf_lr = 1e-3
     # 512 batch, 40 iters, 20 games
     batch_size = 512
-    train_pi_iters = 30
-    train_v_iters = 30
+    train_pi_iters = 40
+    train_v_iters = 40
     target_kl = 5.0
-    n_games = "2"
+    n_games = "20"
 
     # Random seed
     torch.manual_seed(seed)
@@ -326,18 +324,19 @@ def run(rank, size):
 
     # Create or load actor-critic module
     ac, total_iterations = get_player(load_from_disk=False)
+    if rank == 0:
+        # Serialize the actor-critic so that it can be loaded by environment processes
+        save_serialized_player(ac.to("cpu"))
+        # Save the candidate that new models need to try and beat
+        save_serialized_candidate(ac.to("cpu"))
+
+    dist.barrier()
+    ac.to("cuda:0")
     # Set up optimizers for policy and value function
     pi_optimizer = Adam(ac.pi.parameters(), lr=pi_lr)
     vf_optimizer = Adam(ac.v.parameters(), lr=vf_lr)
 
-    if rank == 0:
-        # Serialize the actor-critic so that it can be loaded by environment processes
-        save_serialized_player(ac)
-        # Save the candidate that new models need to try and beat
-        save_serialized_candidate(ac)
-    dist.barrier()
-
-    for iteration in range(100):
+    while True:
         experience = play_games(n_games)
         buffer = PPOBuffer(**parse_env_experience(experience))
         buffer.finish_path()
@@ -358,17 +357,20 @@ def run(rank, size):
             for obs, act, adv, logp_old in actor_dataloader:
                 pi_optimizer.zero_grad()
                 loss_pi, pi_info = compute_loss_pi(obs, act, adv, logp_old, ac)
-                print(pi_info)
-                kl = pi_info["kl"]
-                if kl > target_kl:
-                    break
+                # kl = pi_info["kl"]
+                # if kl > target_kl:
+                #     break
                 loss_pi.backward()
                 # Average gradients here
                 average_gradients(ac.pi)
                 pi_optimizer.step()
-            if kl > target_kl:
-                print("Early stopping at step %d due to reaching max kl." % i)
-                break
+            if i % 5 == 0 and rank == 0:
+                print(pi_info)
+            # if kl > target_kl:
+            #     print("Early stopping at step %d due to reaching max kl." % i)
+            #     break
+
+        dist.barrier()
 
         # Value function learning
         for i in range(train_v_iters):
@@ -379,28 +381,32 @@ def run(rank, size):
                 # Average gradients here
                 average_gradients(ac.v)
                 vf_optimizer.step()
-            if i % 5 == 0:
+            if i % 5 == 0 and rank == 0:
                 print(f"value loss: {loss_v.item()}")
 
         total_iterations += 1
 
-        # Save a serialized version of the updated AC
-        save_serialized_player(ac)
+        dist.barrier()
 
-        # Save the weights of the AC module if it can reliably beat its predecessor
-        if total_iterations % 5 == 0 and total_iterations > 0:
-            current_ac_wins = test_candidate()
-            if current_ac_wins:
-                # The current AC becomes the new candidate to beat
-                save_serialized_candidate(ac)
-                # Save the weights of the AC module
+        if rank == 0:
+            # Save a serialized version of the updated AC
+            save_serialized_player(ac.to("cpu"))
+            # Save the weights of the AC module if it can reliably beat its predecessor
+            if total_iterations % 2 == 0 and total_iterations > 0:
+                current_ac_wins = test_candidate()
+                if current_ac_wins:
+                    # The current AC becomes the new candidate to beat
+                    save_serialized_candidate(ac)
+                    # Save the weights of the AC module
                 save_ac_weights(ac, total_iterations)
+            ac.to("cuda:0")
+        dist.barrier()
 
 
 def init_process(rank, size, fn, backend="gloo"):
     """Initialize the distributed environment."""
-    os.environ["MASTER_ADDR"] = "127.0.0.1"
-    os.environ["MASTER_PORT"] = "29500"
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "2222"
     dist.init_process_group(backend, rank=rank, world_size=size)
     fn(rank, size)
 
