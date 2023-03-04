@@ -13,6 +13,8 @@ import torch
 import scipy.signal
 import os
 from subprocess import Popen, PIPE
+import copy
+import io
 
 
 def discount_cumsum(x, discount):
@@ -61,9 +63,21 @@ def save_ac_weights(ac_module, nr_iterations: int):
 
 
 def save_serialized(ac, loc):
-    m = torch.jit.script(ac)
+    module_to_save = copy.deepcopy(ac)
+    module_to_save.to("cpu")
+    # module_to_save.eval()
+    random_input = torch.rand((750))
+    random_mask = torch.where(torch.rand((1575)) > 0.7, 0, 1)
+    example_input = torch.cat([random_input, random_mask])
+    # m = torch.jit.script(ac)
+    m = torch.jit.trace(ac, example_input)
     # Save to file
-    torch.jit.save(m, loc)
+    import io
+
+    buffer = io.BytesIO()
+    torch.jit.save(m, buffer)
+    # m.save(loc)
+    return buffer
 
 
 def save_serialized_player(ac):
@@ -81,6 +95,17 @@ def play_games(n_games):
     # Separate inputs with newlines
     process_input = f"{SERIALIZED_PLAYER_LOC}\n{n_games}"
     output, err = p.communicate(process_input.encode("utf-8"))
+    p.kill()
+    return output
+
+
+def play_games_2(ac):
+    # Environment process
+    buf = io.BytesIO()
+    buf_size = buf.write(torch.jit.script(ac).save_to_buffer())
+    p = Popen(["build/Debug/train_env.exe"], stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    buf.seek(0)
+    output, err = p.communicate(buf.read(10))
     return output
 
 

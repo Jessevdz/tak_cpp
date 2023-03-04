@@ -48,28 +48,40 @@ Tak environment used during training
 class TakEnv
 {
 private:
+    Board board;
     ExperienceBuffer white_player_experience;
     ExperienceBuffer black_player_experience;
     void write_player_experience(string, ExperienceBuffer &);
+    bool step();
+    void reset() { board.reset_board(); };
 
 public:
-    TakEnv(string);
+    TakEnv(torch::jit::script::Module);
     torch::jit::script::Module player;
-    Board board;
-    void reset() { board.reset_board(); };
-    bool step();
+    void play_game();
     void write_experience_to_cout();
 };
 
 /******************************************************
 Initialize players with trained model. Reset the board.
 *******************************************************/
-TakEnv::TakEnv(string ac_path)
+TakEnv::TakEnv(torch::jit::script::Module player)
 {
-    player = torch::jit::load(ac_path);
+    player = player;
     ExperienceBuffer white_player_experience = ExperienceBuffer();
     ExperienceBuffer black_player_experience = ExperienceBuffer();
     player.eval();
+    reset();
+}
+
+void TakEnv::play_game()
+{
+    reset();
+    bool game_ends = false;
+    while (!game_ends)
+    {
+        game_ends = step();
+    }
     reset();
 }
 

@@ -13,9 +13,10 @@ from train_utils import (
     save_ac_weights,
     save_serialized_player,
     save_serialized_candidate,
-    play_games,
+    play_games_2,
     parse_env_experience,
     test_candidate,
+    find_ac_weights,
 )
 
 
@@ -31,7 +32,11 @@ class Critic(nn.Module):
             nn.ReLU(),
             nn.Linear(450, 350),
             nn.ReLU(),
-            nn.Linear(350, 1),
+            nn.Linear(350, 250),
+            nn.ReLU(),
+            nn.Linear(250, 150),
+            nn.ReLU(),
+            nn.Linear(150, 1),
         )
 
     def forward(self, obs):
@@ -61,13 +66,14 @@ class Actor(nn.Module):
             nn.Linear(1450, 1575),
         )
 
-    def sample_action(self, logits):
+    def sample_action(self, probs):
         # Logits to probabilities
-        probs = F.softmax(logits, dim=-1)
+        # probs = F.softmax(logits, dim=-1)
         action = torch.multinomial(probs, 1, True)
         return action
 
     def get_action_log_prob(self, logits, act):
+        # logits = logits.log_softmax(dim=1)
         act = act.long().unsqueeze(-1)
         act, log_pmf = torch.broadcast_tensors(act, logits)
         act = act[..., :1]
@@ -78,7 +84,9 @@ class Actor(nn.Module):
         # optionally compute the log likelihood of given actions under
         # those distributions.
         logits = self.policy_net(obs)
-        logits = logits - logits.logsumexp(dim=-1, keepdim=True)
+        logits = logits.log_softmax(dim=1)
+        # logits = logits - logits.logsumexp(dim=-1, keepdim=True)
+        # normalized_logits = F.softmax(logits, dim=-1)
         logp_a = self.get_action_log_prob(logits, act)
         return logp_a
 
@@ -88,13 +96,17 @@ class Actor(nn.Module):
         """
         logits = self.policy_net(obs)
         # Normalize logits: https://github.com/pytorch/pytorch/blob/master/torch/distributions/categorical.py
-        logits = logits - logits.logsumexp(dim=-1, keepdim=True)
+        # logits = logits - logits.logsumexp(dim=-1, keepdim=True)
+        # logits = logits.log_softmax(dim=1)
 
-        # Choose actions from masked logits
+        # Choose actions from masked probabilities
         masked_logits = torch.where(valid_actions > 0, logits, torch.tensor([-1e8]))
-        action = self.sample_action(masked_logits)
+        probabilities = F.softmax(masked_logits, dim=-1)
+        action = self.sample_action(probabilities)
 
         # But calculate logp from the unmasked logits
+        # dim = 0 because there is no batch dimension during inference
+        logits = logits.log_softmax(dim=0)
         logp_a = self.get_action_log_prob(logits, action)
         return action, logp_a
 
@@ -124,7 +136,7 @@ def get_player(load_from_disk=False):
     if load_from_disk:
         if os.path.exists(AC_WEIGHTS_LOC):
             # Load weights at the largest previously trained iteration
-            weight_filename, iters = find_actor_weights(AC_WEIGHTS_LOC)
+            weight_filename, iters = find_ac_weights(AC_WEIGHTS_LOC)
             ac_module.load_state_dict(
                 torch.load(f"{AC_WEIGHTS_LOC}\\{weight_filename}")
             )
@@ -209,10 +221,10 @@ class PPOBuffer:
 
 class ActorDataset(Dataset):
     def __init__(self, data):
-        self.obs = data["obs"].to("cuda:0")
-        self.act = data["act"].to("cuda:0")
-        self.adv = data["adv"].to("cuda:0")
-        self.logp_old = data["logp"].to("cuda:0")
+        self.obs = data["obs"].to("cuda")
+        self.act = data["act"].to("cuda")
+        self.adv = data["adv"].to("cuda")
+        self.logp_old = data["logp"].to("cuda")
         assert len(self.obs) == len(self.act) == len(self.adv) == len(self.logp_old)
 
     def __len__(self):
@@ -224,8 +236,8 @@ class ActorDataset(Dataset):
 
 class CriticDataset(Dataset):
     def __init__(self, data):
-        self.obs = data["obs"].to("cuda:0")
-        self.ret = data["ret"].to("cuda:0")
+        self.obs = data["obs"].to("cuda")
+        self.ret = data["ret"].to("cuda")
         assert len(self.obs) == len(self.ret)
 
     def __len__(self):
@@ -311,19 +323,19 @@ def run(rank, size):
     seed = 42
     pi_lr = 3e-4
     vf_lr = 1e-3
-    # 512 batch, 40 iters, 20 games
-    batch_size = 512
-    train_pi_iters = 40
-    train_v_iters = 40
-    target_kl = 5.0
-    n_games = "20"
+    batch_size = 64
+    train_pi_iters = 10
+    train_v_iters = 10
+    target_kl = 0.02
+    n_games = "50"
 
     # Random seed
     torch.manual_seed(seed)
     np.random.seed(seed)
 
     # Create or load actor-critic module
-    ac, total_iterations = get_player(load_from_disk=False)
+    ac, total_iterations = get_player(load_from_disk=True)
+    print(f"Resuming training from iteration {total_iterations}")
     if rank == 0:
         # Serialize the actor-critic so that it can be loaded by environment processes
         save_serialized_player(ac.to("cpu"))
@@ -340,7 +352,11 @@ def run(rank, size):
         experience = play_games(n_games)
         buffer = PPOBuffer(**parse_env_experience(experience))
         buffer.finish_path()
-        # update_ppo(buffer, ac, batch_size, train_pi_iters, train_v_iters)
+        if rank == 0:
+            min_logp = buffer.logp_buf.min()
+            max_logp = buffer.logp_buf.max()
+            print(f"Min logp: {min_logp} = Max logp: {max_logp}")
+
         # Build data loaders
         data = buffer.get()
         actor_ds = ActorDataset(data)
@@ -357,18 +373,19 @@ def run(rank, size):
             for obs, act, adv, logp_old in actor_dataloader:
                 pi_optimizer.zero_grad()
                 loss_pi, pi_info = compute_loss_pi(obs, act, adv, logp_old, ac)
-                # kl = pi_info["kl"]
-                # if kl > target_kl:
-                #     break
+                kl = pi_info["kl"]
+                if kl > target_kl:
+                    break
                 loss_pi.backward()
-                # Average gradients here
-                average_gradients(ac.pi)
                 pi_optimizer.step()
             if i % 5 == 0 and rank == 0:
-                print(pi_info)
-            # if kl > target_kl:
-            #     print("Early stopping at step %d due to reaching max kl." % i)
-            #     break
+                print(f"{pi_info}")
+            if kl > target_kl:
+                print("Early stopping at step %d due to reaching max kl." % i)
+                break
+        if kl > target_kl and i == 0:
+            print("Not training value function")
+            continue
 
         dist.barrier()
 
@@ -378,8 +395,6 @@ def run(rank, size):
                 vf_optimizer.zero_grad()
                 loss_v = compute_loss_v(ac, obs, ret)
                 loss_v.backward()
-                # Average gradients here
-                average_gradients(ac.v)
                 vf_optimizer.step()
             if i % 5 == 0 and rank == 0:
                 print(f"value loss: {loss_v.item()}")
@@ -392,13 +407,13 @@ def run(rank, size):
             # Save a serialized version of the updated AC
             save_serialized_player(ac.to("cpu"))
             # Save the weights of the AC module if it can reliably beat its predecessor
-            if total_iterations % 2 == 0 and total_iterations > 0:
+            if total_iterations % 3 == 0 and total_iterations > 0:
                 current_ac_wins = test_candidate()
                 if current_ac_wins:
                     # The current AC becomes the new candidate to beat
-                    save_serialized_candidate(ac)
+                    save_serialized_candidate(ac.to("cpu"))
                     # Save the weights of the AC module
-                save_ac_weights(ac, total_iterations)
+                    save_ac_weights(ac.to("cpu"), total_iterations)
             ac.to("cuda:0")
         dist.barrier()
 
@@ -406,66 +421,106 @@ def run(rank, size):
 def init_process(rank, size, fn, backend="gloo"):
     """Initialize the distributed environment."""
     os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "2222"
+    os.environ["MASTER_PORT"] = "42424"
     dist.init_process_group(backend, rank=rank, world_size=size)
     fn(rank, size)
 
 
-if __name__ == "__main__":
-    size = 2
-    processes = []
-    mp.set_start_method("spawn")
-    for rank in range(size):
-        p = mp.Process(target=init_process, args=(rank, size, run))
-        p.start()
-        processes.append(p)
-
-    for p in processes:
-        p.join()
-
-
 # if __name__ == "__main__":
-#     seed = 42
-#     pi_lr = 3e-4
-#     vf_lr = 1e-3
-#     # 512 batch, 40 iters, 20 games
-#     batch_size = 512
-#     train_pi_iters = 30
-#     train_v_iters = 30
-#     target_kl = 5.0
-#     n_games = "2"
+#     size = 3
+#     processes = []
+#     mp.set_start_method("spawn")
+#     for rank in range(size):
+#         p = mp.Process(target=init_process, args=(rank, size, run))
+#         p.start()
+#         processes.append(p)
 
-#     # Random seed
-#     torch.manual_seed(seed)
-#     np.random.seed(seed)
+#     for p in processes:
+#         p.join()
 
-#     # Create or load actor-critic module
-#     ac, total_iterations = get_player(load_from_disk=False)
-#     # Set up optimizers for policy and value function
-#     pi_optimizer = Adam(ac.pi.parameters(), lr=pi_lr)
-#     vf_optimizer = Adam(ac.v.parameters(), lr=vf_lr)
 
-#     # Serialize the actor-critic so that it can be loaded by environment processes
-#     save_serialized_player(ac)
-#     # Save the candidate that new models need to try and beat
-#     save_serialized_candidate(ac)
+if __name__ == "__main__":
+    seed = 42
+    pi_lr = 3e-4
+    vf_lr = 1e-3
+    batch_size = 10
+    train_pi_iters = 5
+    train_v_iters = 5
+    target_kl = 0.02
+    n_games = "1"
 
-#     # Main loop: collect experience in env and update AC
-#     while True:
-#         experience = play_games(n_games)
-#         buffer = PPOBuffer(**parse_env_experience(experience))
-#         buffer.finish_path()
-#         update_ppo(buffer, ac, batch_size, train_pi_iters, train_v_iters)
-#         total_iterations += 1
+    # Random seed
+    # torch.manual_seed(seed)
+    # np.random.seed(seed)
 
-#         # Save a serialized version of the updated AC
-#         save_serialized_player(ac)
+    # Create or load actor-critic module
+    ac, total_iterations = get_player(load_from_disk=False)
+    print(f"Resuming training from iteration {total_iterations}")
+    ac.to("cuda")
+    ac.train()
 
-#         # Save the weights of the AC module if it can reliably beat its predecessor
-#         if total_iterations % 5 == 0 and total_iterations > 0:
-#             current_ac_wins = test_candidate()
-#             if current_ac_wins:
-#                 # The current AC becomes the new candidate to beat
-#                 save_serialized_candidate(ac)
-#                 # Save the weights of the AC module
-#                 save_ac_weights(ac, total_iterations)
+    # Serialize the actor-critic so that it can be loaded by environment processes
+    # buf = save_serialized_player(ac)
+    # save_serialized_player(ac)
+    # Save the candidate that new models need to try and beat
+    # save_serialized_candidate(ac)
+
+    from subprocess import Popen, PIPE
+    import io
+
+    buf = io.BytesIO()
+    buf_size = buf.write(torch.jit.script(ac).save_to_buffer())
+    p = Popen(["build/Debug/train_env.exe"], stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    buf.seek(0)
+    for i in range(3):
+        output, err = p.communicate(buf.read(10))
+
+    while True:
+        experience = play_games_2(ac)
+        buffer = PPOBuffer(**parse_env_experience(experience))
+        buffer.finish_path()
+        # update_ppo(buffer, ac, batch_size, train_pi_iters, train_v_iters)
+        # Build data loaders
+        data = buffer.get()
+        actor_ds = ActorDataset(data)
+        critic_ds = CriticDataset(data)
+        actor_dataloader = DataLoader(
+            actor_ds, batch_size=batch_size, shuffle=False, num_workers=0
+        )
+        critic_dataloader = DataLoader(
+            critic_ds, batch_size=batch_size, shuffle=False, num_workers=0
+        )
+
+        # Set up optimizers for policy and value function
+        pi_optimizer = Adam(ac.pi.parameters(), lr=pi_lr)
+        vf_optimizer = Adam(ac.v.parameters(), lr=vf_lr)
+
+        # Train policy with multiple steps of gradient descent
+        for i in range(train_pi_iters):
+            batch_step = 0
+            for obs, act, adv, logp_old in actor_dataloader:
+                pi_optimizer.zero_grad()
+                loss_pi, pi_info = compute_loss_pi(obs, act, adv, logp_old, ac)
+                if i == 0 and batch_step == 0:
+                    print(pi_info["kl"])
+                kl = pi_info["kl"]
+                if kl > target_kl:
+                    break
+                loss_pi.backward()
+                pi_optimizer.step()
+                batch_step += 1
+            if kl > target_kl:
+                print(
+                    f"Early stopping at iteration {i}, batch step {batch_step} due to reaching max kl."
+                )
+                break
+
+        # Value function learning
+        for i in range(train_v_iters):
+            for obs, ret in critic_dataloader:
+                vf_optimizer.zero_grad()
+                loss_v = compute_loss_v(ac, obs, ret)
+                loss_v.backward()
+                vf_optimizer.step()
+
+        total_iterations += 1
