@@ -7,13 +7,19 @@ int main()
     cin >> ac_filename;
     int games_to_play;
     cin >> games_to_play;
-    TakEnv env = TakEnv(ac_filename);
+    // string ac_filename = "C:\\Users\\Jesse\\Projects\\tak_cpp\\module_4.pt";
+    // int games_to_play = 5;
+    torch::NoGradGuard no_grad;
+    torch::jit::script::Module player = torch::jit::load(ac_filename);
+    player.to(at::kCPU);
+    player.eval();
+    TakEnv env = TakEnv();
     for (int i = 0; i < games_to_play; i++)
     {
         bool game_ends = false;
         while (!game_ends)
         {
-            game_ends = env.step();
+            game_ends = env.step(player);
         }
         env.reset();
     }

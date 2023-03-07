@@ -13,8 +13,6 @@ import torch
 import scipy.signal
 import os
 from subprocess import Popen, PIPE
-import copy
-import io
 
 
 def discount_cumsum(x, discount):
@@ -63,21 +61,9 @@ def save_ac_weights(ac_module, nr_iterations: int):
 
 
 def save_serialized(ac, loc):
-    module_to_save = copy.deepcopy(ac)
-    module_to_save.to("cpu")
-    # module_to_save.eval()
-    random_input = torch.rand((750))
-    random_mask = torch.where(torch.rand((1575)) > 0.7, 0, 1)
-    example_input = torch.cat([random_input, random_mask])
-    # m = torch.jit.script(ac)
-    m = torch.jit.trace(ac, example_input)
+    m = torch.jit.script(ac)
     # Save to file
-    import io
-
-    buffer = io.BytesIO()
-    torch.jit.save(m, buffer)
-    # m.save(loc)
-    return buffer
+    torch.jit.save(m, loc)
 
 
 def save_serialized_player(ac):
@@ -88,24 +74,20 @@ def save_serialized_candidate(ac):
     save_serialized(ac, CANDIDATE_LOC)
 
 
-def play_games(n_games):
+def play_games(path, n_games):
     """Play a number of games with an agent and return the experience."""
     # Environment process
-    p = Popen(["build/Debug/train_env.exe"], stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    p = Popen(
+        ["build/Debug/train_env.exe"],
+        stdin=PIPE,
+        stdout=PIPE,
+        stderr=PIPE,
+        start_new_session=True,
+    )
     # Separate inputs with newlines
-    process_input = f"{SERIALIZED_PLAYER_LOC}\n{n_games}"
+    process_input = f"{path}\n{n_games}"
     output, err = p.communicate(process_input.encode("utf-8"))
     p.kill()
-    return output
-
-
-def play_games_2(ac):
-    # Environment process
-    buf = io.BytesIO()
-    buf_size = buf.write(torch.jit.script(ac).save_to_buffer())
-    p = Popen(["build/Debug/train_env.exe"], stdin=PIPE, stdout=PIPE, stderr=PIPE)
-    buf.seek(0)
-    output, err = p.communicate(buf.read(10))
     return output
 
 
@@ -122,8 +104,8 @@ def parse_env_experience(env_experience):
     i = 0
     for val in env_experience:
         if val == "":
-            break
-        if i == 0:
+            continue
+        elif i == 0:
             is_done.append(int(val))
         elif i == 1:
             actions.append(int(val))
@@ -133,13 +115,27 @@ def parse_env_experience(env_experience):
             values.append(float(val))
         elif i == 4:
             action_logprobs.append(float(val))
-        elif i == 755:
+        elif i == 754:
             i = -1
+            observation.append(int(val))
             observations.append(observation)
             observation = []
         elif i >= 5:
             observation.append(int(val))
         i += 1
+    assert (
+        len(values)
+        == len(rewards)
+        == len(observations)
+        == len(is_done)
+        == len(actions)
+        == len(action_logprobs)
+        == (len(env_experience) - 1) / 755
+    )
+    for obs in observations:
+        assert min(obs) >= 0
+        assert max(obs) <= 1
+        assert len(obs) == 750
     return {
         "obs": observations,
         "act": actions,

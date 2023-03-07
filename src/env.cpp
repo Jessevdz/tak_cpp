@@ -1,6 +1,7 @@
 #include "board.h"
 #include <torch/torch.h>
 #include <iostream>
+#include <fstream>
 #include <torch/script.h>
 #include <memory>
 #include <chrono>
@@ -48,40 +49,28 @@ Tak environment used during training
 class TakEnv
 {
 private:
-    Board board;
     ExperienceBuffer white_player_experience;
     ExperienceBuffer black_player_experience;
-    void write_player_experience(string, ExperienceBuffer &);
-    bool step();
-    void reset() { board.reset_board(); };
+    void write_player_experience(string &, ExperienceBuffer &);
 
 public:
-    TakEnv(torch::jit::script::Module);
-    torch::jit::script::Module player;
-    void play_game();
+    TakEnv();
+    // torch::jit::script::Module player;
+    Board board;
+    void reset() { board.reset_board(); };
+    bool step(torch::jit::script::Module &);
     void write_experience_to_cout();
 };
 
 /******************************************************
 Initialize players with trained model. Reset the board.
 *******************************************************/
-TakEnv::TakEnv(torch::jit::script::Module player)
+TakEnv::TakEnv()
 {
-    player = player;
+    // player = torch::jit::load(ac_path);
     ExperienceBuffer white_player_experience = ExperienceBuffer();
     ExperienceBuffer black_player_experience = ExperienceBuffer();
-    player.eval();
-    reset();
-}
-
-void TakEnv::play_game()
-{
-    reset();
-    bool game_ends = false;
-    while (!game_ends)
-    {
-        game_ends = step();
-    }
+    // player.eval();
     reset();
 }
 
@@ -91,21 +80,25 @@ Have the player module pick an action.
 Perform the action on the board.
 Save all necessary state.
 *******************************************************/
-bool TakEnv::step()
+bool TakEnv::step(torch::jit::script::Module &player)
 {
-    torch::NoGradGuard no_grad;
     // Get necessary state from the board
     vector<int> obs = board.get_board_state();
     vector<int> moves_mask = board.get_valid_moves_mask();
+    vector<int> concatenated;
+    concatenated.insert(concatenated.end(), obs.begin(), obs.end());
+    concatenated.insert(concatenated.end(), moves_mask.begin(), moves_mask.end());
     // Create Tensor input
-    torch::Tensor obs_tensor = torch::from_blob(obs.data(), obs.size(), torch::TensorOptions().device(torch::kCPU));
-    torch::Tensor moves_tensor = torch::from_blob(moves_mask.data(), moves_mask.size(), torch::TensorOptions().device(torch::kCPU));
-    torch::Tensor arr[2] = {obs_tensor, moves_tensor};
-    torch::Tensor input_tensor = torch::cat(arr);
+    // torch::Tensor obs_tensor = torch::from_blob(obs.data(), obs.size(), torch::TensorOptions().dtype(torch::kFloat32));
+    // torch::Tensor moves_tensor = torch::from_blob(moves_mask.data(), moves_mask.size(), torch::TensorOptions().dtype(torch::kFloat32));
+    // torch::Tensor arr[2] = {obs_tensor, moves_tensor};
+    // torch::Tensor input_tensor = torch::cat(arr);
+    torch::Tensor input_tensor = torch::from_blob(concatenated.data(), concatenated.size(), torch::TensorOptions().dtype(torch::kFloat32));
     std::vector<torch::jit::IValue> inputs;
     inputs.push_back(input_tensor);
     // Pick a move
-    at::Tensor output = player.forward(inputs).toTensor();
+    torch::NoGradGuard no_grad;
+    at::Tensor output = player(inputs).toTensor();
     // Output contains [action, logp_a, v]
     int action = output[0].item<int>();
     float logp_a = output[1].item<float>();
@@ -157,9 +150,9 @@ bool TakEnv::step()
 /******************************************************
 Write a single player's experience to disk.
 *******************************************************/
-void TakEnv::write_player_experience(string ss, ExperienceBuffer &player_exp)
+void TakEnv::write_player_experience(string &ss, ExperienceBuffer &player_exp)
 {
-    char delimiter = ',';
+    string delimiter = ",";
     for (int i = 0; i < player_exp.experience_len; i++)
     {
         int action = player_exp.actions[i];
@@ -173,13 +166,10 @@ void TakEnv::write_player_experience(string ss, ExperienceBuffer &player_exp)
         ss += std::to_string(reward) += delimiter;
         ss += std::to_string(value) += delimiter;
         ss += std::to_string(action_logprob) += delimiter;
-        ss += std::to_string(is_done) += delimiter;
         for (int i : obs)
         {
             ss += std::to_string(i) += delimiter;
         }
-        std::cout << ss;
-        ss.clear();
     }
 }
 
@@ -189,9 +179,9 @@ Write the combined white and black player experience to disk.
 void TakEnv::write_experience_to_cout()
 {
     string ss;
-    ss.reserve(2000);
     write_player_experience(ss, white_player_experience);
     write_player_experience(ss, black_player_experience);
+    std::cout << ss;
 }
 
 /******************************************************
@@ -235,8 +225,8 @@ char TakEnvTest::step(bool opponent_starts)
     vector<int> obs = board.get_board_state();
     vector<int> moves_mask = board.get_valid_moves_mask();
     // Create Tensor input
-    torch::Tensor obs_tensor = torch::from_blob(obs.data(), obs.size(), torch::TensorOptions().device(torch::kCPU));
-    torch::Tensor moves_tensor = torch::from_blob(moves_mask.data(), moves_mask.size(), torch::TensorOptions().device(torch::kCPU));
+    torch::Tensor obs_tensor = torch::from_blob(obs.data(), obs.size());
+    torch::Tensor moves_tensor = torch::from_blob(moves_mask.data(), moves_mask.size());
     torch::Tensor arr[2] = {obs_tensor, moves_tensor};
     torch::Tensor input_tensor = torch::cat(arr);
     std::vector<torch::jit::IValue> inputs;

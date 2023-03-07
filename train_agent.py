@@ -13,11 +13,11 @@ from train_utils import (
     save_ac_weights,
     save_serialized_player,
     save_serialized_candidate,
-    play_games_2,
+    play_games,
     parse_env_experience,
     test_candidate,
-    find_ac_weights,
 )
+import copy
 
 
 class Critic(nn.Module):
@@ -32,11 +32,7 @@ class Critic(nn.Module):
             nn.ReLU(),
             nn.Linear(450, 350),
             nn.ReLU(),
-            nn.Linear(350, 250),
-            nn.ReLU(),
-            nn.Linear(250, 150),
-            nn.ReLU(),
-            nn.Linear(150, 1),
+            nn.Linear(350, 1),
         )
 
     def forward(self, obs):
@@ -66,14 +62,13 @@ class Actor(nn.Module):
             nn.Linear(1450, 1575),
         )
 
-    def sample_action(self, probs):
+    def sample_action(self, logits):
         # Logits to probabilities
-        # probs = F.softmax(logits, dim=-1)
+        probs = F.softmax(logits, dim=-1)
         action = torch.multinomial(probs, 1, True)
         return action
 
     def get_action_log_prob(self, logits, act):
-        # logits = logits.log_softmax(dim=1)
         act = act.long().unsqueeze(-1)
         act, log_pmf = torch.broadcast_tensors(act, logits)
         act = act[..., :1]
@@ -84,9 +79,7 @@ class Actor(nn.Module):
         # optionally compute the log likelihood of given actions under
         # those distributions.
         logits = self.policy_net(obs)
-        logits = logits.log_softmax(dim=1)
-        # logits = logits - logits.logsumexp(dim=-1, keepdim=True)
-        # normalized_logits = F.softmax(logits, dim=-1)
+        logits = logits - logits.logsumexp(dim=-1, keepdim=True)
         logp_a = self.get_action_log_prob(logits, act)
         return logp_a
 
@@ -96,17 +89,13 @@ class Actor(nn.Module):
         """
         logits = self.policy_net(obs)
         # Normalize logits: https://github.com/pytorch/pytorch/blob/master/torch/distributions/categorical.py
-        # logits = logits - logits.logsumexp(dim=-1, keepdim=True)
-        # logits = logits.log_softmax(dim=1)
+        logits = logits - logits.logsumexp(dim=-1, keepdim=True)
 
-        # Choose actions from masked probabilities
+        # Choose actions from masked logits
         masked_logits = torch.where(valid_actions > 0, logits, torch.tensor([-1e8]))
-        probabilities = F.softmax(masked_logits, dim=-1)
-        action = self.sample_action(probabilities)
+        action = self.sample_action(masked_logits)
 
         # But calculate logp from the unmasked logits
-        # dim = 0 because there is no batch dimension during inference
-        logits = logits.log_softmax(dim=0)
         logp_a = self.get_action_log_prob(logits, action)
         return action, logp_a
 
@@ -128,6 +117,91 @@ class ActorCritic(nn.Module):
         action, logp_a = self.pi.forward(obs, valid_action_mask)
         v = self.v(obs)
         return torch.cat([action, logp_a, v])
+
+
+class CombinedAC(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.critic = nn.Sequential(
+            nn.Linear(750, 650),
+            nn.ReLU(),
+            nn.Linear(650, 550),
+            nn.ReLU(),
+            nn.Linear(550, 450),
+            nn.ReLU(),
+            nn.Linear(450, 350),
+            nn.ReLU(),
+            nn.Linear(350, 1),
+        )
+        self.actor = nn.Sequential(
+            nn.Linear(750, 800),
+            nn.ReLU(),
+            nn.Linear(800, 850),
+            nn.ReLU(),
+            nn.Linear(850, 950),
+            nn.ReLU(),
+            nn.Linear(950, 1050),
+            nn.ReLU(),
+            nn.Linear(1050, 1150),
+            nn.ReLU(),
+            nn.Linear(1150, 1250),
+            nn.ReLU(),
+            nn.Linear(1250, 1350),
+            nn.ReLU(),
+            nn.Linear(1350, 1450),
+            nn.ReLU(),
+            nn.Linear(1450, 1575),
+        )
+        self.logsoftmax = nn.LogSoftmax()
+
+    @torch.jit.export
+    def sample_action(self, logits):
+        # Logits to probabilities
+        probs = F.softmax(logits, dim=-1)
+        action = torch.multinomial(probs, 1, True)
+        return action
+
+    @torch.jit.export
+    def get_action_log_prob(self, logits, act):
+        # act = act.long().unsqueeze(-1)
+        # act, log_pmf = torch.broadcast_tensors(act, logits)
+        # act = act[..., :1]
+        # return log_pmf.gather(-1, act).squeeze(-1)
+        return logits.gather(1, act.unsqueeze(1).to(torch.int64)).squeeze(-1)
+
+    def critic_loss(self, obs):
+        return self.critic(obs)
+
+    @torch.jit.export
+    def actor_loss(self, obs, act):
+        # Produce action distributions for given observations, and
+        # optionally compute the log likelihood of given actions under
+        # those distributions.
+        logits = self.actor(obs)
+        logits = logits - logits.logsumexp(dim=-1, keepdim=True)
+        logp_a = self.get_action_log_prob(logits, act)
+        return logp_a
+
+    def forward(self, inputs):
+        # Used in CPP code
+        obs = inputs[:750]
+        valid_action_mask = inputs[750:]
+        # action, logp_a = self.actor_forward(obs, valid_action_mask)
+        # v = self.critic_forward(obs)
+
+        logits = self.actor(obs)
+        # Normalize logits: https://github.com/pytorch/pytorch/blob/master/torch/distributions/categorical.py
+        logits = logits - logits.logsumexp(dim=0)
+
+        # Choose actions from masked logits
+        masked_logits = torch.where(valid_action_mask > 0, logits, torch.tensor([-1e8]))
+        action = self.sample_action(masked_logits)
+
+        # But calculate logp from the unmasked logits
+        # logp_a = self.get_action_log_prob(logits, action)
+        logp_a = logits[action]
+        v = self.critic(obs)
+        return torch.cat([action, logp_a, v], dim=0)
 
 
 def get_player(load_from_disk=False):
@@ -161,6 +235,15 @@ class PPOBuffer:
         self.val_buf = np.array(val, dtype=np.float32)
         self.logp_buf = np.array(logp, dtype=np.float32)
         self.is_done = np.array(is_done, dtype=np.float32)
+
+        assert (
+            len(self.obs_buf)
+            == len(self.act_buf)
+            == len(self.rew_buf)
+            == len(self.val_buf)
+            == len(self.logp_buf)
+            == len(self.is_done)
+        )
 
         self.adv_buf = np.zeros(len(self.obs_buf), dtype=np.float32)
         self.ret_buf = np.zeros(len(self.obs_buf), dtype=np.float32)
@@ -221,30 +304,35 @@ class PPOBuffer:
 
 class ActorDataset(Dataset):
     def __init__(self, data):
-        self.obs = data["obs"].to("cuda")
-        self.act = data["act"].to("cuda")
-        self.adv = data["adv"].to("cuda")
-        self.logp_old = data["logp"].to("cuda")
+        self.obs = data["obs"].to("cuda:0")
+        self.act = data["act"].to("cuda:0")
+        self.adv = data["adv"].to("cuda:0")
+        self.logp_old = data["logp"].to("cuda:0")
         assert len(self.obs) == len(self.act) == len(self.adv) == len(self.logp_old)
 
     def __len__(self):
         return len(self.obs)
 
     def __getitem__(self, idx):
-        return self.obs[idx], self.act[idx], self.adv[idx], self.logp_old[idx]
+        return (
+            self.obs[idx].to(torch.float32),
+            self.act[idx].to(torch.float32),
+            self.adv[idx].to(torch.float32),
+            self.logp_old[idx].to(torch.float32),
+        )
 
 
 class CriticDataset(Dataset):
     def __init__(self, data):
-        self.obs = data["obs"].to("cuda")
-        self.ret = data["ret"].to("cuda")
+        self.obs = data["obs"].to("cuda:0")
+        self.ret = data["ret"].to("cuda:0")
         assert len(self.obs) == len(self.ret)
 
     def __len__(self):
         return len(self.obs)
 
     def __getitem__(self, idx):
-        return self.obs[idx], self.ret[idx]
+        return self.obs[idx].to(torch.float32), self.ret[idx].to(torch.float32)
 
 
 def compute_loss_pi(obs, act, adv, logp_old, ac, clip_ratio=0.2):
@@ -273,7 +361,7 @@ def compute_loss_v(ac, obs, ret):
     return ((pred_ret - ret) ** 2).mean()
 
 
-def update_ppo(buffer, ac, batch_size, train_pi_iters, train_v_iters):
+def update_ppo(buffer, ac_to_train, batch_size, train_pi_iters, train_v_iters):
     # Build data loaders
     data = buffer.get()
     actor_ds = ActorDataset(data)
@@ -287,10 +375,13 @@ def update_ppo(buffer, ac, batch_size, train_pi_iters, train_v_iters):
 
     # Train policy with multiple steps of gradient descent
     for i in range(train_pi_iters):
+        batch_step = 0
         for obs, act, adv, logp_old in actor_dataloader:
             pi_optimizer.zero_grad()
-            loss_pi, pi_info = compute_loss_pi(obs, act, adv, logp_old, ac)
-            print(pi_info)
+            loss_pi, pi_info = compute_loss_pi(obs, act, adv, logp_old, ac_to_train)
+            if i == 0 and batch_step == 0:
+                print(pi_info)
+                batch_step += 1
             kl = pi_info["kl"]
             if kl > target_kl:
                 break
@@ -304,11 +395,13 @@ def update_ppo(buffer, ac, batch_size, train_pi_iters, train_v_iters):
     for i in range(train_v_iters):
         for obs, ret in critic_dataloader:
             vf_optimizer.zero_grad()
-            loss_v = compute_loss_v(obs, ret)
+            loss_v = compute_loss_v(ac_to_train, obs, ret)
             loss_v.backward()
             vf_optimizer.step()
-        if i % 5 == 0:
-            print(f"value loss: {loss_v.item()}")
+        # if i % 5 == 0:
+        #     print(f"value loss: {loss_v.item()}")
+
+    return ac_to_train
 
 
 def average_gradients(model):
@@ -323,19 +416,19 @@ def run(rank, size):
     seed = 42
     pi_lr = 3e-4
     vf_lr = 1e-3
-    batch_size = 64
-    train_pi_iters = 10
-    train_v_iters = 10
-    target_kl = 0.02
-    n_games = "50"
+    # 512 batch, 40 iters, 20 games
+    batch_size = 512
+    train_pi_iters = 40
+    train_v_iters = 40
+    target_kl = 5.0
+    n_games = "20"
 
     # Random seed
     torch.manual_seed(seed)
     np.random.seed(seed)
 
     # Create or load actor-critic module
-    ac, total_iterations = get_player(load_from_disk=True)
-    print(f"Resuming training from iteration {total_iterations}")
+    ac, total_iterations = get_player(load_from_disk=False)
     if rank == 0:
         # Serialize the actor-critic so that it can be loaded by environment processes
         save_serialized_player(ac.to("cpu"))
@@ -352,11 +445,7 @@ def run(rank, size):
         experience = play_games(n_games)
         buffer = PPOBuffer(**parse_env_experience(experience))
         buffer.finish_path()
-        if rank == 0:
-            min_logp = buffer.logp_buf.min()
-            max_logp = buffer.logp_buf.max()
-            print(f"Min logp: {min_logp} = Max logp: {max_logp}")
-
+        # update_ppo(buffer, ac, batch_size, train_pi_iters, train_v_iters)
         # Build data loaders
         data = buffer.get()
         actor_ds = ActorDataset(data)
@@ -373,19 +462,18 @@ def run(rank, size):
             for obs, act, adv, logp_old in actor_dataloader:
                 pi_optimizer.zero_grad()
                 loss_pi, pi_info = compute_loss_pi(obs, act, adv, logp_old, ac)
-                kl = pi_info["kl"]
-                if kl > target_kl:
-                    break
+                # kl = pi_info["kl"]
+                # if kl > target_kl:
+                #     break
                 loss_pi.backward()
+                # Average gradients here
+                average_gradients(ac.pi)
                 pi_optimizer.step()
             if i % 5 == 0 and rank == 0:
-                print(f"{pi_info}")
-            if kl > target_kl:
-                print("Early stopping at step %d due to reaching max kl." % i)
-                break
-        if kl > target_kl and i == 0:
-            print("Not training value function")
-            continue
+                print(pi_info)
+            # if kl > target_kl:
+            #     print("Early stopping at step %d due to reaching max kl." % i)
+            #     break
 
         dist.barrier()
 
@@ -395,6 +483,8 @@ def run(rank, size):
                 vf_optimizer.zero_grad()
                 loss_v = compute_loss_v(ac, obs, ret)
                 loss_v.backward()
+                # Average gradients here
+                average_gradients(ac.v)
                 vf_optimizer.step()
             if i % 5 == 0 and rank == 0:
                 print(f"value loss: {loss_v.item()}")
@@ -407,13 +497,13 @@ def run(rank, size):
             # Save a serialized version of the updated AC
             save_serialized_player(ac.to("cpu"))
             # Save the weights of the AC module if it can reliably beat its predecessor
-            if total_iterations % 3 == 0 and total_iterations > 0:
+            if total_iterations % 2 == 0 and total_iterations > 0:
                 current_ac_wins = test_candidate()
                 if current_ac_wins:
                     # The current AC becomes the new candidate to beat
-                    save_serialized_candidate(ac.to("cpu"))
+                    save_serialized_candidate(ac)
                     # Save the weights of the AC module
-                    save_ac_weights(ac.to("cpu"), total_iterations)
+                save_ac_weights(ac, total_iterations)
             ac.to("cuda:0")
         dist.barrier()
 
@@ -421,13 +511,13 @@ def run(rank, size):
 def init_process(rank, size, fn, backend="gloo"):
     """Initialize the distributed environment."""
     os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "42424"
+    os.environ["MASTER_PORT"] = "2222"
     dist.init_process_group(backend, rank=rank, world_size=size)
     fn(rank, size)
 
 
 # if __name__ == "__main__":
-#     size = 3
+#     size = 2
 #     processes = []
 #     mp.set_start_method("spawn")
 #     for rank in range(size):
@@ -443,44 +533,37 @@ if __name__ == "__main__":
     seed = 42
     pi_lr = 3e-4
     vf_lr = 1e-3
-    batch_size = 10
-    train_pi_iters = 5
-    train_v_iters = 5
-    target_kl = 0.02
-    n_games = "1"
+    batch_size = 32
+    train_pi_iters = 2
+    train_v_iters = 2
+    target_kl = 0.1
+    n_games = "2"
 
-    # Random seed
-    # torch.manual_seed(seed)
-    # np.random.seed(seed)
+    ac_to_train = CombinedAC()
+    total_iterations = 0
+    ac_to_train.to("cuda")
+    pi_optimizer = Adam(ac_to_train.actor.parameters(), lr=pi_lr)
+    vf_optimizer = Adam(ac_to_train.critic.parameters(), lr=vf_lr)
 
-    # Create or load actor-critic module
-    ac, total_iterations = get_player(load_from_disk=False)
-    print(f"Resuming training from iteration {total_iterations}")
-    ac.to("cuda")
-    ac.train()
+    ac_to_train.to("cpu")
+    ac_to_train.eval()
+    m_original = torch.jit.script(copy.deepcopy(ac_to_train))
+    cur_module_name = f"module_{total_iterations}.pt"
+    m_original.save(cur_module_name)
 
-    # Serialize the actor-critic so that it can be loaded by environment processes
-    # buf = save_serialized_player(ac)
-    # save_serialized_player(ac)
-    # Save the candidate that new models need to try and beat
-    # save_serialized_candidate(ac)
+    # random_input = torch.rand((750))
+    # random_mask = torch.where(torch.rand((1575)) > 0.7, 0, 1)
+    # _inp = torch.cat([random_input, random_mask])
+    # m_traced = torch.jit.trace(ac_to_train, _inp)
 
-    from subprocess import Popen, PIPE
-    import io
-
-    buf = io.BytesIO()
-    buf_size = buf.write(torch.jit.script(ac).save_to_buffer())
-    p = Popen(["build/Debug/train_env.exe"], stdin=PIPE, stdout=PIPE, stderr=PIPE)
-    buf.seek(0)
-    for i in range(3):
-        output, err = p.communicate(buf.read(10))
-
+    # Main loop: collect experience in env and update AC
     while True:
-        experience = play_games_2(ac)
-        buffer = PPOBuffer(**parse_env_experience(experience))
+        experience = play_games(cur_module_name, n_games)
+        parsed_experience = parse_env_experience(experience)
+        buffer = PPOBuffer(**parsed_experience)
         buffer.finish_path()
-        # update_ppo(buffer, ac, batch_size, train_pi_iters, train_v_iters)
-        # Build data loaders
+
+        # Train AC model
         data = buffer.get()
         actor_ds = ActorDataset(data)
         critic_ds = CriticDataset(data)
@@ -491,36 +574,74 @@ if __name__ == "__main__":
             critic_ds, batch_size=batch_size, shuffle=False, num_workers=0
         )
 
-        # Set up optimizers for policy and value function
-        pi_optimizer = Adam(ac.pi.parameters(), lr=pi_lr)
-        vf_optimizer = Adam(ac.v.parameters(), lr=vf_lr)
-
         # Train policy with multiple steps of gradient descent
+        ac_to_train.to("cuda")
+        ac_to_train.train()
         for i in range(train_pi_iters):
             batch_step = 0
             for obs, act, adv, logp_old in actor_dataloader:
                 pi_optimizer.zero_grad()
-                loss_pi, pi_info = compute_loss_pi(obs, act, adv, logp_old, ac)
+                logp = ac_to_train.actor_loss(obs, act)
+                ratio = torch.exp(logp - logp_old)
+                clip_ratio = 0.2
+                clip_adv = torch.clamp(ratio, 1 - clip_ratio, 1 + clip_ratio) * adv
+                loss_pi = -(torch.min(ratio * adv, clip_adv)).mean()
+
+                # Useful extra info
+                approx_kl = (logp_old - logp).mean().item()
+                clipped = ratio.gt(1 + clip_ratio) | ratio.lt(1 - clip_ratio)
+                clipfrac = torch.as_tensor(clipped, dtype=torch.float32).mean().item()
+                pi_info = dict(kl=approx_kl, cf=clipfrac)
                 if i == 0 and batch_step == 0:
-                    print(pi_info["kl"])
+                    print(ratio.std().item())
+                    batch_step += 1
                 kl = pi_info["kl"]
                 if kl > target_kl:
                     break
                 loss_pi.backward()
                 pi_optimizer.step()
-                batch_step += 1
             if kl > target_kl:
-                print(
-                    f"Early stopping at iteration {i}, batch step {batch_step} due to reaching max kl."
-                )
+                # print("Early stopping at step %d due to reaching max kl." % i)
                 break
 
         # Value function learning
         for i in range(train_v_iters):
             for obs, ret in critic_dataloader:
                 vf_optimizer.zero_grad()
-                loss_v = compute_loss_v(ac, obs, ret)
+                pred_ret = ac_to_train.critic_loss(obs).squeeze()
+                loss_v = ((pred_ret - ret) ** 2).mean()
                 loss_v.backward()
                 vf_optimizer.step()
 
+        torch.save(copy.deepcopy(ac_to_train.state_dict()), "tmp.pt")
+        ac_to_train = CombinedAC()
+        CombinedAC().load_state_dict(torch.load("tmp.pt"))
+        ac_to_train.to("cuda")
+        pi_optimizer = Adam(ac_to_train.actor.parameters(), lr=pi_lr)
+        vf_optimizer = Adam(ac_to_train.critic.parameters(), lr=vf_lr)
+
         total_iterations += 1
+        os.remove(cur_module_name)
+        cur_module_name = f"module_{total_iterations}.pt"
+        ac_to_train.to("cpu")
+        ac_to_train.eval()
+        m_current = torch.jit.script(copy.deepcopy(ac_to_train))
+        m_current.save(cur_module_name)
+
+        # ac_to_train.to("cpu")
+        # ac_to_train.eval()
+        # for obs, act, buf_logp in zip(buffer.obs_buf, buffer.act_buf, buffer.logp_buf):
+        #     obs = torch.tensor(obs)
+        #     act = torch.tensor(act)
+        #     logp_original = round(
+        #         m_original.actor_loss(obs.unsqueeze(0), act.unsqueeze(0)).item(), 3
+        #     )
+        #     logp_current = round(
+        #         m_current.actor_loss(obs.unsqueeze(0), act.unsqueeze(0)).item(),
+        #         3,
+        #     )
+        #     logp_ac = round(
+        #         ac_to_train.actor_loss(obs.unsqueeze(0), act.unsqueeze(0)).item(), 3
+        #     )
+        #     logp_buffer = round(float(buf_logp), 3)
+        #     pass
