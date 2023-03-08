@@ -55,7 +55,6 @@ private:
 
 public:
     TakEnv();
-    // torch::jit::script::Module player;
     Board board;
     void reset() { board.reset_board(); };
     bool step(torch::jit::script::Module &);
@@ -67,10 +66,8 @@ Initialize players with trained model. Reset the board.
 *******************************************************/
 TakEnv::TakEnv()
 {
-    // player = torch::jit::load(ac_path);
     ExperienceBuffer white_player_experience = ExperienceBuffer();
     ExperienceBuffer black_player_experience = ExperienceBuffer();
-    // player.eval();
     reset();
 }
 
@@ -89,20 +86,17 @@ bool TakEnv::step(torch::jit::script::Module &player)
     concatenated.insert(concatenated.end(), obs.begin(), obs.end());
     concatenated.insert(concatenated.end(), moves_mask.begin(), moves_mask.end());
     // Create Tensor input
-    // torch::Tensor obs_tensor = torch::from_blob(obs.data(), obs.size(), torch::TensorOptions().dtype(torch::kFloat32));
-    // torch::Tensor moves_tensor = torch::from_blob(moves_mask.data(), moves_mask.size(), torch::TensorOptions().dtype(torch::kFloat32));
-    // torch::Tensor arr[2] = {obs_tensor, moves_tensor};
-    // torch::Tensor input_tensor = torch::cat(arr);
-    torch::Tensor input_tensor = torch::from_blob(concatenated.data(), concatenated.size(), torch::TensorOptions().dtype(torch::kFloat32));
+    // torch::Tensor input_tensor = torch::from_blob(concatenated.data(), concatenated.size(), torch::TensorOptions().dtype(torch::kFloat32));
+    torch::Tensor input_tensor = torch::from_blob(concatenated.data(), {1, 2325}, torch::TensorOptions().dtype(torch::kFloat32));
     std::vector<torch::jit::IValue> inputs;
     inputs.push_back(input_tensor);
     // Pick a move
     torch::NoGradGuard no_grad;
     at::Tensor output = player(inputs).toTensor();
     // Output contains [action, logp_a, v]
-    int action = output[0].item<int>();
-    float logp_a = output[1].item<float>();
-    float value = output[2].item<float>();
+    int action = output[0][0].item<int>();
+    float logp_a = output[0][1].item<float>();
+    float value = output[0][2].item<float>();
     // Get the player executing the move.
     char active_player = board.get_active_player();
     // Execute the chosen move on the board.

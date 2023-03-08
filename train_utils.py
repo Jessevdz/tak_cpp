@@ -82,7 +82,6 @@ def play_games(path, n_games):
         stdin=PIPE,
         stdout=PIPE,
         stderr=PIPE,
-        start_new_session=True,
     )
     # Separate inputs with newlines
     process_input = f"{path}\n{n_games}"

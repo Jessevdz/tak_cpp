@@ -20,139 +20,55 @@ from train_utils import (
 import copy
 
 
-class Critic(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.v_net = nn.Sequential(
-            nn.Linear(750, 650),
-            nn.ReLU(),
-            nn.Linear(650, 550),
-            nn.ReLU(),
-            nn.Linear(550, 450),
-            nn.ReLU(),
-            nn.Linear(450, 350),
-            nn.ReLU(),
-            nn.Linear(350, 1),
-        )
-
-    def forward(self, obs):
-        return self.v_net(obs)
-
-
 class Actor(nn.Module):
     def __init__(self):
-        super().__init__()
-        self.policy_net = nn.Sequential(
-            nn.Linear(750, 800),
-            nn.ReLU(),
-            nn.Linear(800, 850),
-            nn.ReLU(),
-            nn.Linear(850, 950),
-            nn.ReLU(),
-            nn.Linear(950, 1050),
-            nn.ReLU(),
-            nn.Linear(1050, 1150),
-            nn.ReLU(),
-            nn.Linear(1150, 1250),
-            nn.ReLU(),
-            nn.Linear(1250, 1350),
-            nn.ReLU(),
-            nn.Linear(1350, 1450),
-            nn.ReLU(),
-            nn.Linear(1450, 1575),
-        )
+        super(Actor, self).__init__()
+        self.fc1 = nn.Linear(750, 800)
+        self.fc2 = nn.Linear(800, 850)
+        self.fc3 = nn.Linear(850, 950)
+        self.fc4 = nn.Linear(950, 1050)
+        self.fc5 = nn.Linear(1050, 1150)
+        self.fc6 = nn.Linear(1150, 1250)
+        self.fc7 = nn.Linear(1250, 1350)
+        self.fc8 = nn.Linear(1350, 1450)
+        self.fc9 = nn.Linear(1450, 1575)
 
-    def sample_action(self, logits):
-        # Logits to probabilities
-        probs = F.softmax(logits, dim=-1)
-        action = torch.multinomial(probs, 1, True)
-        return action
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = F.relu(self.fc3(x))
+        x = F.relu(self.fc4(x))
+        x = F.relu(self.fc5(x))
+        x = F.relu(self.fc6(x))
+        x = F.relu(self.fc7(x))
+        x = F.relu(self.fc8(x))
+        x = self.fc9(x)
+        return x
 
-    def get_action_log_prob(self, logits, act):
-        act = act.long().unsqueeze(-1)
-        act, log_pmf = torch.broadcast_tensors(act, logits)
-        act = act[..., :1]
-        return log_pmf.gather(-1, act).squeeze(-1)
 
-    def forward_loss(self, obs, act):
-        # Produce action distributions for given observations, and
-        # optionally compute the log likelihood of given actions under
-        # those distributions.
-        logits = self.policy_net(obs)
-        logits = logits - logits.logsumexp(dim=-1, keepdim=True)
-        logp_a = self.get_action_log_prob(logits, act)
-        return logp_a
+class Critic(nn.Module):
+    def __init__(self):
+        super(Critic, self).__init__()
+        self.fc1 = nn.Linear(750, 650)
+        self.fc2 = nn.Linear(650, 550)
+        self.fc3 = nn.Linear(550, 450)
+        self.fc4 = nn.Linear(450, 350)
+        self.fc5 = nn.Linear(350, 1)
 
-    def forward(self, obs, valid_actions):
-        """
-        Produce action distributions for given observations
-        """
-        logits = self.policy_net(obs)
-        # Normalize logits: https://github.com/pytorch/pytorch/blob/master/torch/distributions/categorical.py
-        logits = logits - logits.logsumexp(dim=-1, keepdim=True)
-
-        # Choose actions from masked logits
-        masked_logits = torch.where(valid_actions > 0, logits, torch.tensor([-1e8]))
-        action = self.sample_action(masked_logits)
-
-        # But calculate logp from the unmasked logits
-        logp_a = self.get_action_log_prob(logits, action)
-        return action, logp_a
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = F.relu(self.fc3(x))
+        x = F.relu(self.fc4(x))
+        x = self.fc5(x)
+        return x
 
 
 class ActorCritic(nn.Module):
-    """
-    AC implementation that can be serialized by torchscript, and thus
-    moved to the C++ code.
-    """
-
-    def __init__(self):
+    def __init__(self, actor, critic):
         super().__init__()
-        self.pi = Actor()  # Policy
-        self.v = Critic()  # Value function
-
-    def forward(self, inputs):
-        obs = inputs[:750]
-        valid_action_mask = inputs[750:]
-        action, logp_a = self.pi.forward(obs, valid_action_mask)
-        v = self.v(obs)
-        return torch.cat([action, logp_a, v])
-
-
-class CombinedAC(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.critic = nn.Sequential(
-            nn.Linear(750, 650),
-            nn.ReLU(),
-            nn.Linear(650, 550),
-            nn.ReLU(),
-            nn.Linear(550, 450),
-            nn.ReLU(),
-            nn.Linear(450, 350),
-            nn.ReLU(),
-            nn.Linear(350, 1),
-        )
-        self.actor = nn.Sequential(
-            nn.Linear(750, 800),
-            nn.ReLU(),
-            nn.Linear(800, 850),
-            nn.ReLU(),
-            nn.Linear(850, 950),
-            nn.ReLU(),
-            nn.Linear(950, 1050),
-            nn.ReLU(),
-            nn.Linear(1050, 1150),
-            nn.ReLU(),
-            nn.Linear(1150, 1250),
-            nn.ReLU(),
-            nn.Linear(1250, 1350),
-            nn.ReLU(),
-            nn.Linear(1350, 1450),
-            nn.ReLU(),
-            nn.Linear(1450, 1575),
-        )
-        self.logsoftmax = nn.LogSoftmax()
+        self.critic = critic
+        self.actor = actor
 
     @torch.jit.export
     def sample_action(self, logits):
@@ -162,13 +78,6 @@ class CombinedAC(nn.Module):
         return action
 
     @torch.jit.export
-    def get_action_log_prob(self, logits, act):
-        # act = act.long().unsqueeze(-1)
-        # act, log_pmf = torch.broadcast_tensors(act, logits)
-        # act = act[..., :1]
-        # return log_pmf.gather(-1, act).squeeze(-1)
-        return logits.gather(1, act.unsqueeze(1).to(torch.int64)).squeeze(-1)
-
     def critic_loss(self, obs):
         return self.critic(obs)
 
@@ -179,29 +88,52 @@ class CombinedAC(nn.Module):
         # those distributions.
         logits = self.actor(obs)
         logits = logits - logits.logsumexp(dim=-1, keepdim=True)
-        logp_a = self.get_action_log_prob(logits, act)
+        # Get the log probabilities of the actions
+        # obs and act should always be a batch here
+        logp_a = logits.gather(1, act.unsqueeze(1).to(torch.int64)).squeeze(-1)
         return logp_a
 
-    def forward(self, inputs):
-        # Used in CPP code
-        obs = inputs[:750]
-        valid_action_mask = inputs[750:]
-        # action, logp_a = self.actor_forward(obs, valid_action_mask)
-        # v = self.critic_forward(obs)
+    @torch.jit.ignore
+    def to_torchscript(self):
+        a = copy.deepcopy(self.actor).to("cpu").eval()
+        c = copy.deepcopy(self.critic).to("cpu").eval()
+        scripted_actor = torch.jit.script(a)
+        scripted_critic = torch.jit.script(c)
+        ac = ActorCritic(scripted_actor, scripted_critic).to("cpu").eval()
+        scripted_ac = torch.jit.script(ac)
+        return scripted_ac
+
+    def forward(self, inputs, action=None):
+        """Exported to torchscript module and used in the CPP code"""
+        obs = inputs[:, 0:750]
+        valid_action_mask = inputs[:, 750:2325]
 
         logits = self.actor(obs)
         # Normalize logits: https://github.com/pytorch/pytorch/blob/master/torch/distributions/categorical.py
-        logits = logits - logits.logsumexp(dim=0)
+        logits = logits - logits.logsumexp(dim=1, keepdim=True)
 
-        # Choose actions from masked logits
-        masked_logits = torch.where(valid_action_mask > 0, logits, torch.tensor([-1e8]))
-        action = self.sample_action(masked_logits)
+        v = None
+        if action is None:
+            # Choose actions from masked logits
+            # masked_logits = torch.where(valid_action_mask > 0, logits, torch.tensor([-1e8]))
+            masked_logits = torch.where(valid_action_mask > 0, logits, -1e8)
+            # action = self.sample_action(masked_logits)
+            probs = F.softmax(masked_logits, dim=1)
+            action = torch.multinomial(probs, 1, True)
+            v = self.critic(obs)
+        else:
+            action = action.long().unsqueeze(0)
 
         # But calculate logp from the unmasked logits
-        # logp_a = self.get_action_log_prob(logits, action)
-        logp_a = logits[action]
-        v = self.critic(obs)
-        return torch.cat([action, logp_a, v], dim=0)
+        # Here logits and action are not a batch, simply select the logp from logits.
+        logp_a = logits.gather(1, action)
+
+        action = torch.movedim(action, 0, 1)
+        logp_a = torch.movedim(logp_a, 0, 1)
+        if v is not None:
+            return torch.cat([action, logp_a, v], dim=1)
+        else:
+            return torch.cat([action, logp_a], dim=1)
 
 
 def get_player(load_from_disk=False):
@@ -299,40 +231,35 @@ class PPOBuffer:
             adv=self.adv_buf,
             logp=self.logp_buf,
         )
-        return {k: torch.as_tensor(v, dtype=torch.float32) for k, v in data.items()}
+        return {k: torch.tensor(v, dtype=torch.float32) for k, v in data.items()}
 
 
 class ActorDataset(Dataset):
     def __init__(self, data):
-        self.obs = data["obs"].to("cuda:0")
-        self.act = data["act"].to("cuda:0")
-        self.adv = data["adv"].to("cuda:0")
-        self.logp_old = data["logp"].to("cuda:0")
+        self.obs = data["obs"].to("cuda").to(torch.float32)
+        self.act = data["act"].to("cuda").to(torch.float32)
+        self.adv = data["adv"].to("cuda").to(torch.float32)
+        self.logp_old = data["logp"].to("cuda").to(torch.float32)
         assert len(self.obs) == len(self.act) == len(self.adv) == len(self.logp_old)
 
     def __len__(self):
         return len(self.obs)
 
     def __getitem__(self, idx):
-        return (
-            self.obs[idx].to(torch.float32),
-            self.act[idx].to(torch.float32),
-            self.adv[idx].to(torch.float32),
-            self.logp_old[idx].to(torch.float32),
-        )
+        return (self.obs[idx], self.act[idx], self.adv[idx], self.logp_old[idx])
 
 
 class CriticDataset(Dataset):
     def __init__(self, data):
-        self.obs = data["obs"].to("cuda:0")
-        self.ret = data["ret"].to("cuda:0")
+        self.obs = data["obs"].to("cuda").to(torch.float32)
+        self.ret = data["ret"].to("cuda").to(torch.float32)
         assert len(self.obs) == len(self.ret)
 
     def __len__(self):
         return len(self.obs)
 
     def __getitem__(self, idx):
-        return self.obs[idx].to(torch.float32), self.ret[idx].to(torch.float32)
+        return self.obs[idx], self.ret[idx]
 
 
 def compute_loss_pi(obs, act, adv, logp_old, ac, clip_ratio=0.2):
@@ -533,32 +460,50 @@ if __name__ == "__main__":
     seed = 42
     pi_lr = 3e-4
     vf_lr = 1e-3
-    batch_size = 32
-    train_pi_iters = 2
-    train_v_iters = 2
-    target_kl = 0.1
+    batch_size = 10
+    train_pi_iters = 10
+    train_v_iters = 10
+    target_kl = 0.03
     n_games = "2"
-
-    ac_to_train = CombinedAC()
     total_iterations = 0
-    ac_to_train.to("cuda")
-    pi_optimizer = Adam(ac_to_train.actor.parameters(), lr=pi_lr)
-    vf_optimizer = Adam(ac_to_train.critic.parameters(), lr=vf_lr)
 
-    ac_to_train.to("cpu")
-    ac_to_train.eval()
-    m_original = torch.jit.script(copy.deepcopy(ac_to_train))
-    cur_module_name = f"module_{total_iterations}.pt"
-    m_original.save(cur_module_name)
+    actor_gpu = Actor().to("cuda")
+    critic_gpu = Critic().to("cuda")
+    ac_gpu = ActorCritic(actor_gpu, critic_gpu).to("cuda")
 
-    # random_input = torch.rand((750))
-    # random_mask = torch.where(torch.rand((1575)) > 0.7, 0, 1)
-    # _inp = torch.cat([random_input, random_mask])
-    # m_traced = torch.jit.trace(ac_to_train, _inp)
+    actor_cpu = Actor().to("cpu")
+    for param in actor_cpu.parameters():
+        param.requires_grad = False
+    critic_cpu = Critic().to("cpu")
+    for param in actor_cpu.parameters():
+        param.requires_grad = False
+    ac_cpu = ActorCritic(actor_cpu, critic_cpu).to("cpu")
+    ac_cpu.eval()
+    cpu_device = torch.device("cpu")
+
+    random_input = torch.where(torch.rand((1, 750)) > 0.7, 0, 1)
+    random_mask = torch.where(torch.rand((1, 1575)) > 0.7, 0, 1)
+    inp = torch.cat([random_input, random_mask], dim=1)
+    inp_cpu = copy.deepcopy(inp).to(torch.float32).cpu()
+    inp_gpu = copy.deepcopy(inp).to(torch.float32).to("cuda")
+
+    torch.save(ac_gpu.state_dict(), "tmp.pt")
+    ac_cpu.load_state_dict(torch.load("tmp.pt", map_location=cpu_device))
+    os.remove("tmp.pt")
+    traced_ac_cpu = torch.jit.trace(ac_cpu, inp_cpu)
+    # Save CPU traced module for CPP code
+    torch.jit.save(traced_ac_cpu, "traced_ac_cpu.pt")
+
+    # traced_ac_gpu = torch.jit.trace(ac_gpu, inp_gpu)
+    # torch.jit.save(traced_ac_gpu, "traced_ac_gpu.pt")
+    pi_optimizer = Adam(ac_gpu.actor.parameters(), lr=pi_lr)
+    vf_optimizer = Adam(ac_gpu.critic.parameters(), lr=vf_lr)
+    ac_gpu.train()
 
     # Main loop: collect experience in env and update AC
     while True:
-        experience = play_games(cur_module_name, n_games)
+        experience = play_games("traced_ac_cpu.pt", n_games)
+        # os.remove("traced_ac_cpu.pt")
         parsed_experience = parse_env_experience(experience)
         buffer = PPOBuffer(**parsed_experience)
         buffer.finish_path()
@@ -566,7 +511,7 @@ if __name__ == "__main__":
         # Train AC model
         data = buffer.get()
         actor_ds = ActorDataset(data)
-        critic_ds = CriticDataset(data)
+        critic_ds = CriticDataset(copy.deepcopy(data))
         actor_dataloader = DataLoader(
             actor_ds, batch_size=batch_size, shuffle=False, num_workers=0
         )
@@ -575,13 +520,12 @@ if __name__ == "__main__":
         )
 
         # Train policy with multiple steps of gradient descent
-        ac_to_train.to("cuda")
-        ac_to_train.train()
+        first = True
         for i in range(train_pi_iters):
-            batch_step = 0
             for obs, act, adv, logp_old in actor_dataloader:
                 pi_optimizer.zero_grad()
-                logp = ac_to_train.actor_loss(obs, act)
+                out = ac_gpu(obs, act)
+                logp = out[:, 1]
                 ratio = torch.exp(logp - logp_old)
                 clip_ratio = 0.2
                 clip_adv = torch.clamp(ratio, 1 - clip_ratio, 1 + clip_ratio) * adv
@@ -592,56 +536,46 @@ if __name__ == "__main__":
                 clipped = ratio.gt(1 + clip_ratio) | ratio.lt(1 - clip_ratio)
                 clipfrac = torch.as_tensor(clipped, dtype=torch.float32).mean().item()
                 pi_info = dict(kl=approx_kl, cf=clipfrac)
-                if i == 0 and batch_step == 0:
+
+                if first and i == 0:
                     print(ratio.std().item())
-                    batch_step += 1
+                    print(f"kl: {pi_info['kl']}")
+                    first = False
+
                 kl = pi_info["kl"]
                 if kl > target_kl:
                     break
                 loss_pi.backward()
                 pi_optimizer.step()
             if kl > target_kl:
-                # print("Early stopping at step %d due to reaching max kl." % i)
+                print("Early stopping at step %d due to reaching max kl." % i)
                 break
 
         # Value function learning
         for i in range(train_v_iters):
             for obs, ret in critic_dataloader:
                 vf_optimizer.zero_grad()
-                pred_ret = ac_to_train.critic_loss(obs).squeeze()
+                pred_ret = ac_gpu.critic(obs).squeeze()
                 loss_v = ((pred_ret - ret) ** 2).mean()
                 loss_v.backward()
                 vf_optimizer.step()
 
-        torch.save(copy.deepcopy(ac_to_train.state_dict()), "tmp.pt")
-        ac_to_train = CombinedAC()
-        CombinedAC().load_state_dict(torch.load("tmp.pt"))
-        ac_to_train.to("cuda")
-        pi_optimizer = Adam(ac_to_train.actor.parameters(), lr=pi_lr)
-        vf_optimizer = Adam(ac_to_train.critic.parameters(), lr=vf_lr)
-
         total_iterations += 1
-        os.remove(cur_module_name)
-        cur_module_name = f"module_{total_iterations}.pt"
-        ac_to_train.to("cpu")
-        ac_to_train.eval()
-        m_current = torch.jit.script(copy.deepcopy(ac_to_train))
-        m_current.save(cur_module_name)
 
-        # ac_to_train.to("cpu")
-        # ac_to_train.eval()
-        # for obs, act, buf_logp in zip(buffer.obs_buf, buffer.act_buf, buffer.logp_buf):
-        #     obs = torch.tensor(obs)
-        #     act = torch.tensor(act)
-        #     logp_original = round(
-        #         m_original.actor_loss(obs.unsqueeze(0), act.unsqueeze(0)).item(), 3
-        #     )
-        #     logp_current = round(
-        #         m_current.actor_loss(obs.unsqueeze(0), act.unsqueeze(0)).item(),
-        #         3,
-        #     )
-        #     logp_ac = round(
-        #         ac_to_train.actor_loss(obs.unsqueeze(0), act.unsqueeze(0)).item(), 3
-        #     )
-        #     logp_buffer = round(float(buf_logp), 3)
-        #     pass
+        # Save CPU traced module for CPP code
+        torch.save(ac_gpu.state_dict(), "tmp.pt")
+        actor_cpu = Actor().to("cpu")
+        for param in actor_cpu.parameters():
+            param.requires_grad = False
+        critic_cpu = Critic().to("cpu")
+        for param in actor_cpu.parameters():
+            param.requires_grad = False
+        ac_cpu = ActorCritic(actor_cpu, critic_cpu).to("cpu")
+        ac_cpu.eval()
+        ac_cpu.load_state_dict(torch.load("tmp.pt", map_location=cpu_device))
+        os.remove("tmp.pt")
+
+        inp_cpu = copy.deepcopy(inp).to(torch.float32).cpu()
+        traced_ac_cpu = torch.jit.trace(ac_cpu, inp_cpu)
+        # Save CPU traced module for CPP code
+        torch.jit.save(traced_ac_cpu, "traced_ac_cpu.pt")
