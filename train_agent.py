@@ -10,12 +10,12 @@ from torch.utils.data import Dataset, DataLoader
 from train_utils import (
     discount_cumsum,
     AC_WEIGHTS_LOC,
+    SERIALIZED_PLAYER_LOC,
     save_ac_weights,
-    save_serialized_player,
-    save_serialized_candidate,
     play_games,
     parse_env_experience,
     test_candidate,
+    find_ac_weights,
 )
 import copy
 
@@ -120,6 +120,7 @@ class ActorCritic(nn.Module):
             # action = self.sample_action(masked_logits)
             probs = F.softmax(masked_logits, dim=1)
             action = torch.multinomial(probs, 1, True)
+            # The critic cannot be evaluated when training the actor, or it causes bugs
             v = self.critic(obs)
         else:
             action = action.long().unsqueeze(0)
@@ -134,20 +135,6 @@ class ActorCritic(nn.Module):
             return torch.cat([action, logp_a, v], dim=1)
         else:
             return torch.cat([action, logp_a], dim=1)
-
-
-def get_player(load_from_disk=False):
-    """Create a new Actor-Critic module or load one from disk."""
-    ac_module = ActorCritic()
-    if load_from_disk:
-        if os.path.exists(AC_WEIGHTS_LOC):
-            # Load weights at the largest previously trained iteration
-            weight_filename, iters = find_ac_weights(AC_WEIGHTS_LOC)
-            ac_module.load_state_dict(
-                torch.load(f"{AC_WEIGHTS_LOC}\\{weight_filename}")
-            )
-            return ac_module, iters
-    return ac_module, 0
 
 
 class PPOBuffer:
@@ -331,14 +318,6 @@ def update_ppo(buffer, ac_to_train, batch_size, train_pi_iters, train_v_iters):
     return ac_to_train
 
 
-def average_gradients(model):
-    """Gradient averaging."""
-    size = float(dist.get_world_size())
-    for param in model.parameters():
-        dist.all_reduce(param.grad.data, op=dist.ReduceOp.SUM)
-        param.grad.data /= size
-
-
 def run(rank, size):
     seed = 42
     pi_lr = 3e-4
@@ -456,21 +435,25 @@ def init_process(rank, size, fn, backend="gloo"):
 #         p.join()
 
 
-if __name__ == "__main__":
-    seed = 42
-    pi_lr = 3e-4
-    vf_lr = 1e-3
-    batch_size = 10
-    train_pi_iters = 10
-    train_v_iters = 10
-    target_kl = 0.03
-    n_games = "2"
-    total_iterations = 0
-
+def get_ac_gpu(load_from_disk=False):
+    """
+    Create a new Actor-Critic module or load one from disk.
+    This AC lives on the GPU device and is meant to be trained.
+    """
     actor_gpu = Actor().to("cuda")
     critic_gpu = Critic().to("cuda")
-    ac_gpu = ActorCritic(actor_gpu, critic_gpu).to("cuda")
+    ac_gpu = ActorCritic(actor_gpu, critic_gpu)
+    iters = 0
+    if load_from_disk:
+        if os.path.exists(AC_WEIGHTS_LOC):
+            # Load weights at the largest previously trained iteration
+            weight_filename, iters = find_ac_weights(AC_WEIGHTS_LOC)
+            ac_gpu.load_state_dict(torch.load(f"{AC_WEIGHTS_LOC}\\{weight_filename}"))
+    ac_gpu.to("cuda")
+    return ac_gpu, iters
 
+
+def get_ac_cpu():
     actor_cpu = Actor().to("cpu")
     for param in actor_cpu.parameters():
         param.requires_grad = False
@@ -479,31 +462,51 @@ if __name__ == "__main__":
         param.requires_grad = False
     ac_cpu = ActorCritic(actor_cpu, critic_cpu).to("cpu")
     ac_cpu.eval()
-    cpu_device = torch.device("cpu")
+    return ac_cpu
 
+
+def save_traced_ac_cpu(name: str, ac_gpu):
+    """Move the weights from gpu to cpu and serialize."""
+    ac_cpu = get_ac_cpu()
+    cpu_device = torch.device("cpu")
     random_input = torch.where(torch.rand((1, 750)) > 0.7, 0, 1)
     random_mask = torch.where(torch.rand((1, 1575)) > 0.7, 0, 1)
     inp = torch.cat([random_input, random_mask], dim=1)
     inp_cpu = copy.deepcopy(inp).to(torch.float32).cpu()
-    inp_gpu = copy.deepcopy(inp).to(torch.float32).to("cuda")
 
-    torch.save(ac_gpu.state_dict(), "tmp.pt")
-    ac_cpu.load_state_dict(torch.load("tmp.pt", map_location=cpu_device))
-    os.remove("tmp.pt")
-    traced_ac_cpu = torch.jit.trace(ac_cpu, inp_cpu)
+    weight_loc = f"{AC_WEIGHTS_LOC}\\cur_player_weights.pt"
+    torch.save(ac_gpu.state_dict(), weight_loc)
+    ac_cpu.load_state_dict(torch.load(weight_loc, map_location=cpu_device))
+    os.remove(weight_loc)
+    traced_ac_cpu = torch.jit.trace(ac_cpu, inp_cpu, check_trace=False)
     # Save CPU traced module for CPP code
-    torch.jit.save(traced_ac_cpu, "traced_ac_cpu.pt")
+    serialized_loc = f"{SERIALIZED_PLAYER_LOC}\\{name}.pt"
+    torch.jit.save(traced_ac_cpu, serialized_loc)
 
-    # traced_ac_gpu = torch.jit.trace(ac_gpu, inp_gpu)
-    # torch.jit.save(traced_ac_gpu, "traced_ac_gpu.pt")
+
+if __name__ == "__main__":
+    seed = 42
+    pi_lr = 3e-4
+    vf_lr = 1e-3
+    batch_size_pi = 128
+    batch_size_v = 64
+    train_pi_iters = 10
+    train_v_iters = 10
+    target_kl = 0.03
+    n_games = "25"
+
+    ac_gpu, total_iterations = get_ac_gpu(load_from_disk=False)
+
+    save_traced_ac_cpu("player", ac_gpu)
+    save_traced_ac_cpu("opponent", ac_gpu)
+
     pi_optimizer = Adam(ac_gpu.actor.parameters(), lr=pi_lr)
     vf_optimizer = Adam(ac_gpu.critic.parameters(), lr=vf_lr)
     ac_gpu.train()
 
     # Main loop: collect experience in env and update AC
     while True:
-        experience = play_games("traced_ac_cpu.pt", n_games)
-        # os.remove("traced_ac_cpu.pt")
+        experience = play_games("player", n_games)
         parsed_experience = parse_env_experience(experience)
         buffer = PPOBuffer(**parsed_experience)
         buffer.finish_path()
@@ -511,17 +514,18 @@ if __name__ == "__main__":
         # Train AC model
         data = buffer.get()
         actor_ds = ActorDataset(data)
-        critic_ds = CriticDataset(copy.deepcopy(data))
+        critic_ds = CriticDataset(data)
         actor_dataloader = DataLoader(
-            actor_ds, batch_size=batch_size, shuffle=False, num_workers=0
+            actor_ds, batch_size=batch_size_pi, shuffle=False, num_workers=0
         )
         critic_dataloader = DataLoader(
-            critic_ds, batch_size=batch_size, shuffle=False, num_workers=0
+            critic_ds, batch_size=batch_size_v, shuffle=False, num_workers=0
         )
 
         # Train policy with multiple steps of gradient descent
-        first = True
+        new_experience = True
         for i in range(train_pi_iters):
+            batch_step = 0
             for obs, act, adv, logp_old in actor_dataloader:
                 pi_optimizer.zero_grad()
                 out = ac_gpu(obs, act)
@@ -533,49 +537,48 @@ if __name__ == "__main__":
 
                 # Useful extra info
                 approx_kl = (logp_old - logp).mean().item()
-                clipped = ratio.gt(1 + clip_ratio) | ratio.lt(1 - clip_ratio)
-                clipfrac = torch.as_tensor(clipped, dtype=torch.float32).mean().item()
-                pi_info = dict(kl=approx_kl, cf=clipfrac)
+                # clipped = ratio.gt(1 + clip_ratio) | ratio.lt(1 - clip_ratio)
+                # clipfrac = torch.as_tensor(clipped, dtype=torch.float32).mean().item()
+                # pi_info = dict(kl=approx_kl, cf=clipfrac)
 
-                if first and i == 0:
+                if new_experience and i == 0:
+                    # Check that the predictions on python side are the same
+                    # as those on CPP side.
+                    assert ratio.std().item() < 1e-4
                     print(ratio.std().item())
-                    print(f"kl: {pi_info['kl']}")
-                    first = False
+                    new_experience = False
 
-                kl = pi_info["kl"]
-                if kl > target_kl:
+                if approx_kl > target_kl:
                     break
                 loss_pi.backward()
                 pi_optimizer.step()
-            if kl > target_kl:
-                print("Early stopping at step %d due to reaching max kl." % i)
+                batch_step += 1
+            if approx_kl > target_kl:
+                print(
+                    f"Early stopping at epoch {i} batch step {batch_step} due to reaching max kl: {approx_kl}"
+                )
                 break
 
         # Value function learning
-        for i in range(train_v_iters):
+        for j in range(train_v_iters):
+            train_steps = 0
+            epoch_loss = 0
             for obs, ret in critic_dataloader:
                 vf_optimizer.zero_grad()
                 pred_ret = ac_gpu.critic(obs).squeeze()
                 loss_v = ((pred_ret - ret) ** 2).mean()
+                epoch_loss += loss_v.item()
+                train_steps += 1
                 loss_v.backward()
                 vf_optimizer.step()
+            print(epoch_loss / train_steps)
 
         total_iterations += 1
 
-        # Save CPU traced module for CPP code
-        torch.save(ac_gpu.state_dict(), "tmp.pt")
-        actor_cpu = Actor().to("cpu")
-        for param in actor_cpu.parameters():
-            param.requires_grad = False
-        critic_cpu = Critic().to("cpu")
-        for param in actor_cpu.parameters():
-            param.requires_grad = False
-        ac_cpu = ActorCritic(actor_cpu, critic_cpu).to("cpu")
-        ac_cpu.eval()
-        ac_cpu.load_state_dict(torch.load("tmp.pt", map_location=cpu_device))
-        os.remove("tmp.pt")
+        save_traced_ac_cpu("player", ac_gpu)
 
-        inp_cpu = copy.deepcopy(inp).to(torch.float32).cpu()
-        traced_ac_cpu = torch.jit.trace(ac_cpu, inp_cpu)
-        # Save CPU traced module for CPP code
-        torch.jit.save(traced_ac_cpu, "traced_ac_cpu.pt")
+        if total_iterations % 5 == 0 and total_iterations > 0:
+            player_wins = test_candidate()
+            if player_wins:
+                save_traced_ac_cpu("opponent", ac_gpu)
+                save_ac_weights(ac_gpu, total_iterations)

@@ -3,10 +3,14 @@
 
 int main()
 {
-    string player_ac;
-    string opponent_ac;
-    cin >> player_ac;
-    cin >> opponent_ac;
+    // string player_ac;
+    // string opponent_ac;
+    // cin >> player_ac;
+    // cin >> opponent_ac;
+
+    string player_ac = "C:\\Users\\Jesse\\Projects\\tak_cpp\\agents\\traced\\player.pt";
+    string opponent_ac = "C:\\Users\\Jesse\\Projects\\tak_cpp\\agents\\traced\\opponent.pt";
+
     TakEnvTest env = TakEnvTest(player_ac, opponent_ac);
     vector<char> wins;
     // Play 20 games

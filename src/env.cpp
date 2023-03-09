@@ -218,11 +218,11 @@ char TakEnvTest::step(bool opponent_starts)
     // Get necessary state from the board
     vector<int> obs = board.get_board_state();
     vector<int> moves_mask = board.get_valid_moves_mask();
+    vector<int> concatenated;
+    concatenated.insert(concatenated.end(), obs.begin(), obs.end());
+    concatenated.insert(concatenated.end(), moves_mask.begin(), moves_mask.end());
     // Create Tensor input
-    torch::Tensor obs_tensor = torch::from_blob(obs.data(), obs.size());
-    torch::Tensor moves_tensor = torch::from_blob(moves_mask.data(), moves_mask.size());
-    torch::Tensor arr[2] = {obs_tensor, moves_tensor};
-    torch::Tensor input_tensor = torch::cat(arr);
+    torch::Tensor input_tensor = torch::from_blob(concatenated.data(), {1, 2325}, torch::TensorOptions().dtype(torch::kFloat32));
     std::vector<torch::jit::IValue> inputs;
     inputs.push_back(input_tensor);
     // Pick a move
@@ -253,7 +253,7 @@ char TakEnvTest::step(bool opponent_starts)
         }
     }
     // Output contains [action, logp_a, v]
-    int action = output[0].item<int>();
+    int action = output[0][0].item<int>();
     // Execute the chosen move on the board.
     WinConditions win_conditions = board.take_action(action);
     bool game_ends = win_conditions.game_ends;

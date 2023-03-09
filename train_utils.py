@@ -1,12 +1,6 @@
-AC_WEIGHTS_LOC = "C:\\Users\\Jesse\\Projects\\tak_cpp\\agents\\players"
-# The current candidate that new models need to try and beat
-CANDIDATE_LOC = (
-    "C:\\Users\\Jesse\\Projects\\tak_cpp\\agents\\serialized\\candidate_player.pt"
-)
+AC_WEIGHTS_LOC = "C:\\Users\\Jesse\\Projects\\tak_cpp\\agents\\ac_weights"
 # Current player gathering experience in the environments
-SERIALIZED_PLAYER_LOC = (
-    "C:\\Users\\Jesse\\Projects\\tak_cpp\\agents\\serialized\\env_player.pt"
-)
+SERIALIZED_PLAYER_LOC = "C:\\Users\\Jesse\\Projects\\tak_cpp\\agents\\traced"
 
 
 import torch
@@ -51,27 +45,13 @@ def find_ac_weights(loc: str, newest=True):
 
 def save_ac_weights(ac_module, nr_iterations: int):
     # Overwrite the oldest AC if there are more than 5 in the directory
-    if len(os.listdir(AC_WEIGHTS_LOC)) > 4:
-        # Delete the oldest weights
-        weights_loc, _ = find_ac_weights(AC_WEIGHTS_LOC, newest=False)
-        os.remove(f"{AC_WEIGHTS_LOC}\\{weights_loc}")
+    # if len(os.listdir(AC_WEIGHTS_LOC)) > 4:
+    #     # Delete the oldest weights
+    #     weights_loc, _ = find_ac_weights(AC_WEIGHTS_LOC, newest=False)
+    #     os.remove(f"{AC_WEIGHTS_LOC}\\{weights_loc}")
     torch.save(
         ac_module.state_dict(), f"{AC_WEIGHTS_LOC}\\{nr_iterations}_it_weights.pt"
     )
-
-
-def save_serialized(ac, loc):
-    m = torch.jit.script(ac)
-    # Save to file
-    torch.jit.save(m, loc)
-
-
-def save_serialized_player(ac):
-    save_serialized(ac, SERIALIZED_PLAYER_LOC)
-
-
-def save_serialized_candidate(ac):
-    save_serialized(ac, CANDIDATE_LOC)
 
 
 def play_games(path, n_games):
@@ -84,7 +64,7 @@ def play_games(path, n_games):
         stderr=PIPE,
     )
     # Separate inputs with newlines
-    process_input = f"{path}\n{n_games}"
+    process_input = f"{SERIALIZED_PLAYER_LOC}\\{path}.pt\n{n_games}"
     output, err = p.communicate(process_input.encode("utf-8"))
     p.kill()
     return output
@@ -148,8 +128,9 @@ def parse_env_experience(env_experience):
 def test_candidate():
     p = Popen(["build/Debug/test_env.exe"], stdin=PIPE, stdout=PIPE, stderr=PIPE)
     # Separate inputs with newlines
-    process_input = f"{SERIALIZED_PLAYER_LOC}\n{CANDIDATE_LOC}"
-    output, _ = p.communicate(process_input.encode("utf-8"))
+    # process_input = f"{SERIALIZED_PLAYER_LOC}\n{CANDIDATE_LOC}"
+    # output, _ = p.communicate(process_input.encode("utf-8"))
+    output, _ = p.communicate()
     output = output.decode("utf-8")
     output = output.split(",")
     player_wins = output.count("P")
