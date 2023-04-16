@@ -12,7 +12,7 @@ Save the experience gathered in an environment
 *******************************************************/
 struct Experience
 {
-    vector<int> observation;
+    vector<float> observation;
     int action;
     float reward;
     float value;
@@ -22,7 +22,7 @@ struct Experience
 
 struct ExperienceBuffer
 {
-    vector<vector<int>> observations;
+    vector<vector<float>> observations;
     vector<int> actions;
     vector<float> rewards;
     vector<float> values;
@@ -57,7 +57,7 @@ public:
     TakEnv();
     Board board;
     void reset() { board.reset_board(); };
-    bool step(torch::jit::script::Module &);
+    bool step(torch::jit::script::Module &, torch::jit::script::Module &);
     void write_experience_to_cout();
 };
 
@@ -77,26 +77,35 @@ Have the player module pick an action.
 Perform the action on the board.
 Save all necessary state.
 *******************************************************/
-bool TakEnv::step(torch::jit::script::Module &player)
+bool TakEnv::step(torch::jit::script::Module &actor, torch::jit::script::Module &critic)
 {
     // Get necessary state from the board
-    vector<int> obs = board.get_board_state();
-    vector<int> moves_mask = board.get_valid_moves_mask();
-    vector<int> concatenated;
+    vector<float> obs = board.get_board_state();
+    vector<float> moves_mask = board.get_valid_moves_mask();
+    vector<float> concatenated;
     concatenated.insert(concatenated.end(), obs.begin(), obs.end());
     concatenated.insert(concatenated.end(), moves_mask.begin(), moves_mask.end());
     // Create Tensor input
-    // torch::Tensor input_tensor = torch::from_blob(concatenated.data(), concatenated.size(), torch::TensorOptions().dtype(torch::kFloat32));
-    torch::Tensor input_tensor = torch::from_blob(concatenated.data(), {1, 2325}, torch::TensorOptions().dtype(torch::kFloat32));
-    std::vector<torch::jit::IValue> inputs;
-    inputs.push_back(input_tensor);
+    torch::Tensor actor_input_tensor = torch::from_blob(concatenated.data(), {1, 2325});
+    torch::Tensor critic_input_tensor = torch::from_blob(obs.data(), {1, 750});
+    // critic_input_tensor.print();
+    // cout << critic_input_tensor << std::endl;
+
+    std::vector<torch::jit::IValue> actor_inputs;
+    actor_inputs.push_back(actor_input_tensor);
     // Pick a move
     torch::NoGradGuard no_grad;
-    at::Tensor output = player(inputs).toTensor();
-    // Output contains [action, logp_a, v]
+    at::Tensor output = actor(actor_inputs).toTensor();
+    // Output contains [action, logp_a]
     int action = output[0][0].item<int>();
     float logp_a = output[0][1].item<float>();
-    float value = output[0][2].item<float>();
+    // Critic
+    std::vector<torch::jit::IValue> critic_inputs;
+    // critic_inputs.push_back(critic_input_tensor);
+    critic_inputs.push_back(critic_input_tensor);
+    at::Tensor output_2 = critic(critic_inputs).toTensor();
+    float value = output_2[0][0].item<float>();
+
     // Get the player executing the move.
     char active_player = board.get_active_player();
     // Execute the chosen move on the board.
@@ -154,7 +163,7 @@ void TakEnv::write_player_experience(string &ss, ExperienceBuffer &player_exp)
         float value = player_exp.values[i];
         float action_logprob = player_exp.action_logprobs[i];
         int is_done = player_exp.is_done[i];
-        vector<int> obs = player_exp.observations[i];
+        vector<float> obs = player_exp.observations[i];
         ss += std::to_string(is_done) += delimiter;
         ss += std::to_string(action) += delimiter;
         ss += std::to_string(reward) += delimiter;
@@ -216,9 +225,9 @@ char TakEnvTest::step(bool opponent_starts)
 {
     torch::NoGradGuard no_grad;
     // Get necessary state from the board
-    vector<int> obs = board.get_board_state();
-    vector<int> moves_mask = board.get_valid_moves_mask();
-    vector<int> concatenated;
+    vector<float> obs = board.get_board_state();
+    vector<float> moves_mask = board.get_valid_moves_mask();
+    vector<float> concatenated;
     concatenated.insert(concatenated.end(), obs.begin(), obs.end());
     concatenated.insert(concatenated.end(), moves_mask.begin(), moves_mask.end());
     // Create Tensor input

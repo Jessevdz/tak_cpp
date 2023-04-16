@@ -117,21 +117,21 @@ char Square::get_top_stone_type()
 Transform the square to a vector representation.
 Only the top-10 stones are considered in the representation.
 ********************************************************/
-vector<int> Square::get_square_state(const char active_player)
+vector<float> Square::get_square_state(const char active_player)
 {
     stack<Stone> s = stones;
-    vector<int> square_state;
+    vector<float> square_state;
     for (int i = 0; i < 10; i++)
     {
         if (s.empty())
         {
-            vector<int> empty_space = {0, 0, 0};
+            vector<float> empty_space = {0.0, 0.0, 0.0};
             square_state.insert(square_state.end(), empty_space.begin(), empty_space.end());
         }
         else
         {
             Stone stone = s.top();
-            vector<int> stone_vec;
+            vector<float> stone_vec;
             if (stone.color == active_player)
             {
                 stone_vec = player_stone_type_to_vec[stone.type];
@@ -667,14 +667,14 @@ Return a mask indicating valid moves for the active player.
 The mask is over all possible PTN moves.
 The mask contains 1 if it is a valid action, and 0 if it is not.
 *************************************************************/
-vector<int> Board::get_valid_moves_mask()
+vector<float> Board::get_valid_moves_mask()
 {
     vector<string> valid_ptn_moves = valid_moves();
-    vector<int> valid_moves_mask(1575, 0);
+    vector<float> valid_moves_mask(1575, 0.0);
     for (const string ptn_move : valid_ptn_moves)
     {
         const int pnt_move_idx = ptn_move_to_int.at(ptn_move);
-        valid_moves_mask.at(pnt_move_idx) = 1;
+        valid_moves_mask.at(pnt_move_idx) = 1.0;
     }
     return valid_moves_mask;
 }
@@ -866,14 +866,14 @@ WinConditions Board::take_action(const int action)
 /****************************************************************
 Represent the board state as an int vector for the active player.
 ****************************************************************/
-vector<int> Board::get_board_state()
+vector<float> Board::get_board_state()
 {
-    vector<int> board_state;
+    vector<float> board_state;
     for (int file = 0; file < 5; file++)
     {
         for (int rank = 0; rank < 5; rank++)
         {
-            vector<int> square_state = squares[file][rank].get_square_state(active_player);
+            vector<float> square_state = squares[file][rank].get_square_state(active_player);
             board_state.insert(board_state.end(), square_state.begin(), square_state.end()); // Concatenate
         }
     }

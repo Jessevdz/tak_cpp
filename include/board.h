@@ -44,7 +44,7 @@ public:
     const Stone &peek_top_stone();
     char get_top_stone_type();
     int get_size() { return stones.size(); };
-    vector<int> get_square_state(const char);
+    vector<float> get_square_state(const char);
 };
 
 struct WinConditions
@@ -119,8 +119,8 @@ public:
     void execute_ptn_move(const string &); // move to private eventually.
     bool player_has_road(const char &);    // move to private eventually.
     vector<string> valid_moves();          // move to private eventually.
-    vector<int> get_board_state();
-    vector<int> get_valid_moves_mask();
+    vector<float> get_board_state();
+    vector<float> get_valid_moves_mask();
     const char get_active_player() { return active_player; };
     WinConditions do_move(const string &);
     WinConditions take_action(const int);
