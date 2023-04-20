@@ -194,23 +194,17 @@ The player needs to beat the opponent
 class TakEnvTest
 {
 public:
-    TakEnvTest(string, string);
-    torch::jit::script::Module player;
-    torch::jit::script::Module opponent;
+    TakEnvTest();
     Board board;
     void reset() { board.reset_board(); };
-    char step(bool);
+    char step(bool, torch::jit::script::Module &, torch::jit::script::Module &);
 };
 
 /******************************************************
 Initialize players with trained model. Reset the board.
 *******************************************************/
-TakEnvTest::TakEnvTest(string player_path, string opponent_path)
+TakEnvTest::TakEnvTest()
 {
-    player = torch::jit::load(player_path);
-    opponent = torch::jit::load(opponent_path);
-    player.eval();
-    opponent.eval();
     reset();
 }
 
@@ -221,7 +215,7 @@ If step returns "O" - opponent won
 If step returns "T" - tie
 If step returns "C" - game is not done
 *******************************************************/
-char TakEnvTest::step(bool opponent_starts)
+char TakEnvTest::step(bool opponent_starts, torch::jit::script::Module &player, torch::jit::script::Module &opponent)
 {
     torch::NoGradGuard no_grad;
     // Get necessary state from the board
@@ -231,9 +225,10 @@ char TakEnvTest::step(bool opponent_starts)
     concatenated.insert(concatenated.end(), obs.begin(), obs.end());
     concatenated.insert(concatenated.end(), moves_mask.begin(), moves_mask.end());
     // Create Tensor input
-    torch::Tensor input_tensor = torch::from_blob(concatenated.data(), {1, 2325}, torch::TensorOptions().dtype(torch::kFloat32));
-    std::vector<torch::jit::IValue> inputs;
-    inputs.push_back(input_tensor);
+    torch::Tensor actor_input_tensor = torch::from_blob(concatenated.data(), {1, 2325});
+
+    std::vector<torch::jit::IValue> actor_inputs;
+    actor_inputs.push_back(actor_input_tensor);
     // Pick a move
     char active_player = board.get_active_player();
     at::Tensor output;
@@ -242,11 +237,11 @@ char TakEnvTest::step(bool opponent_starts)
         // Opponent is white
         if (active_player == 'W')
         {
-            output = opponent.forward(inputs).toTensor();
+            output = opponent(actor_inputs).toTensor();
         }
         else
         {
-            output = player.forward(inputs).toTensor();
+            output = player(actor_inputs).toTensor();
         }
     }
     else
@@ -254,11 +249,11 @@ char TakEnvTest::step(bool opponent_starts)
         // Opponent is black
         if (active_player == 'W')
         {
-            output = player.forward(inputs).toTensor();
+            output = player(actor_inputs).toTensor();
         }
         else
         {
-            output = opponent.forward(inputs).toTensor();
+            output = opponent(actor_inputs).toTensor();
         }
     }
     // Output contains [action, logp_a, v]

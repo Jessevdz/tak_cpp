@@ -6,8 +6,8 @@ int main()
 {
     // string ac_filename;
     // cin >> ac_filename;
-    int games_to_play = 1;
-    // cin >> games_to_play;
+    int games_to_play;
+    cin >> games_to_play;
 
     string actor_filename = "C:\\Users\\Jesse\\Projects\\tak_cpp\\agents\\traced\\actor.pt";
     string critic_filename = "C:\\Users\\Jesse\\Projects\\tak_cpp\\agents\\traced\\critic.pt";

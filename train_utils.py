@@ -1,4 +1,6 @@
 AC_WEIGHTS_LOC = "C:\\Users\\Jesse\\Projects\\tak_cpp\\agents\\ac_weights"
+ACTOR_WEIGHTS_LOC = f"{AC_WEIGHTS_LOC}\\actor_weights.pt"
+CRITIC_WEIGHTS_LOC = f"{AC_WEIGHTS_LOC}\\critic_weights.pt"
 # Current player gathering experience in the environments
 SERIALIZED_PLAYER_LOC = "C:\\Users\\Jesse\\Projects\\tak_cpp\\agents\\traced"
 
@@ -54,6 +56,12 @@ def save_ac_weights(ac_module, nr_iterations: int):
     )
 
 
+def save_actor_weights(module, nr_iterations: int):
+    torch.save(
+        module.state_dict(), f"{AC_WEIGHTS_LOC}\\{nr_iterations}_it_actor_weights.pt"
+    )
+
+
 def play_games(path, n_games):
     """Play a number of games with an agent and return the experience."""
     # Environment process
@@ -64,7 +72,7 @@ def play_games(path, n_games):
         stderr=PIPE,
     )
     # Separate inputs with newlines
-    process_input = f"{SERIALIZED_PLAYER_LOC}\\{path}.pt\n{n_games}"
+    process_input = f"{n_games}\n"
     output, err = p.communicate(process_input.encode("utf-8"))
     p.kill()
     return output

@@ -8,10 +8,14 @@ int main()
     // cin >> player_ac;
     // cin >> opponent_ac;
 
-    string player_ac = "C:\\Users\\Jesse\\Projects\\tak_cpp\\agents\\traced\\player.pt";
-    string opponent_ac = "C:\\Users\\Jesse\\Projects\\tak_cpp\\agents\\traced\\opponent.pt";
+    string player_actor = "C:\\Users\\Jesse\\Projects\\tak_cpp\\agents\\traced\\actor.pt";
+    string opponent_actor = "C:\\Users\\Jesse\\Projects\\tak_cpp\\agents\\traced\\actor_opponent.pt";
 
-    TakEnvTest env = TakEnvTest(player_ac, opponent_ac);
+    torch::NoGradGuard no_grad;
+    torch::jit::script::Module actor = torch::jit::load(player_actor);
+    torch::jit::script::Module actor_opp = torch::jit::load(opponent_actor);
+
+    TakEnvTest env = TakEnvTest();
     vector<char> wins;
     // Play 20 games
     bool opponent_starts = false;
@@ -21,7 +25,7 @@ int main()
         char winner = 'C';
         while (winner == 'C')
         {
-            winner = env.step(opponent_starts);
+            winner = env.step(opponent_starts, actor, actor_opp);
         }
         wins.push_back(winner);
         env.reset();
@@ -33,7 +37,7 @@ int main()
         char winner = 'C';
         while (winner == 'C')
         {
-            winner = env.step(opponent_starts);
+            winner = env.step(opponent_starts, actor, actor_opp);
         }
         wins.push_back(winner);
         env.reset();
